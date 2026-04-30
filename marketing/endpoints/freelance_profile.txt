@@ -1,0 +1,5 @@
+Professional AI Swarm Architect & Freelance Developer
+- Expertise: Autonomous Agent Systems, Android/Termux Orchestration, Swarm Intelligence.
+- Current Focus: ZeroClaw/OpenClaw implementations, custom automation pipelines.
+- Contact: bleaknarratives@gmail.com
+- Sponsorship: https://github.com/sponsors/BleakNarratives
