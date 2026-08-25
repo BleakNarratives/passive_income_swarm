@@ -64,7 +64,8 @@ RELAYS = [
     "wss://relay.primal.net",
     "wss://nos.lol",
     "wss://relay.damus.io",
-    "wss://relay.nostr.band",
+    # wss://relay.nostr.band dropped 2026-08-25 — dead handshake loop
+    # (TimeoutError every ~18s since deploy). Re-add if it recovers.
 ]
 
 # NIP-90 job request kinds we serve -> result kind mapping
