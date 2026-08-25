@@ -89,3 +89,17 @@
   worker served in 0.81s (262 chars output, outcome=served_free), result
   event accepted by relay. First successful serve since the semaphore bug
   landed. TypeError flood case CLOSED.
+
+## 2026-08-25 ~04:20 CDT — Buffy — Paid rail verified + relay pruned + config persisted
+
+- payment_rail.py self-test ran LIVE against coinos.io: lud16 resolves,
+  min 1 sat, invoice mints (bolt11), verify endpoint returns settled=False
+  correctly. Rail is wired to the real wallet and functional.
+- FOUND doc drift: CLAUDE.md claimed "Payment collection LIVE, DVM_PAID_ONLY=1"
+  but the running service had NO env vars — worker was in free/reputation
+  mode. Reality wins: paid mode was never activated in the service.
+- Created nostr_dvm/dvm.env (DVM_PAID_ONLY=0 default) + wired systemd
+  EnvironmentFile. Flipping DVM_PAID_ONLY=1 now persists across reboots.
+  Deliberately left OFF — revenue switch is the operator's call.
+- Dropped relay.nostr.band (dead handshake loop since deploy). 3 relays,
+  zero retries post-restart.
