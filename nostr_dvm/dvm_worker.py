@@ -36,6 +36,7 @@ import os
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 import requests
@@ -85,6 +86,14 @@ RATE_SEMAPHORE = 1              # concurrent inference jobs
 PAID_ONLY = os.environ.get("DVM_PAID_ONLY", "0") == "1"   # reputation mode default
 PAYMENT_TIMEOUT = int(os.environ.get("DVM_PAYMENT_TIMEOUT", "120"))  # seconds to wait for sats
 PAYMENT_POLL = int(os.environ.get("DVM_PAYMENT_POLL", "3"))          # seconds between verify checks
+
+# Inbound throttling (2026-08-26 — P0 close: a requester could previously
+# fire unlimited jobs, piling tasks onto the loop and draining the Groq free
+# tier / minting unpaid invoices. All env-overridable.)
+DVM_RATE_JOBS = int(os.environ.get("DVM_RATE_JOBS", "10"))        # jobs per window per pubkey
+DVM_RATE_WINDOW = int(os.environ.get("DVM_RATE_WINDOW", "60"))    # seconds
+DVM_MAX_INFLIGHT = int(os.environ.get("DVM_MAX_INFLIGHT", "16"))  # global queued+active jobs
+DVM_MAX_PER_PUBKEY = int(os.environ.get("DVM_MAX_PER_PUBKEY", "2"))  # concurrent jobs per requester
 
 
 def load_groq_key():
@@ -210,6 +219,53 @@ def run_inference(kind, content):
 
 
 # ---------------------------------------------------------------------------
+# INBOUND THROTTLE
+
+_req_history = {}        # pubkey -> deque[ts] (sliding window)
+_inflight = 0            # global queued + active jobs
+_pubkey_inflight = {}    # pubkey -> int (per-requester concurrency)
+_slot_lock = threading.Lock()
+
+
+def _rate_limited(requester):
+    """Sliding-window per-pubkey job check. True = over limit, reject."""
+    now = time.time()
+    q = _req_history.setdefault(requester, deque())
+    while q and q[0] <= now - DVM_RATE_WINDOW:
+        q.popleft()
+    if len(q) >= DVM_RATE_JOBS:
+        return True
+    q.append(now)
+    if len(_req_history) > 4096:   # bound memory on hostile pubkey floods
+        _req_history.clear()
+    return False
+
+
+def _try_acquire_slot(requester):
+    """Global + per-pubkey concurrency gate. False = saturated, reject."""
+    global _inflight
+    with _slot_lock:
+        if _inflight >= DVM_MAX_INFLIGHT:
+            return False
+        if _pubkey_inflight.get(requester, 0) >= DVM_MAX_PER_PUBKEY:
+            return False
+        _inflight += 1
+        _pubkey_inflight[requester] = _pubkey_inflight.get(requester, 0) + 1
+    return True
+
+
+def _release_slot(requester):
+    global _inflight
+    with _slot_lock:
+        _inflight -= 1
+        n = _pubkey_inflight.get(requester, 0) - 1
+        if n <= 0:
+            _pubkey_inflight.pop(requester, None)
+        else:
+            _pubkey_inflight[requester] = n
+
+
+# ---------------------------------------------------------------------------
 # JOB HANDLING
 
 def extract_amount_msat(event):
@@ -228,6 +284,38 @@ async def handle_job(ws, event, relay_name):
     event_id = event.get("id", "")
     requester = event.get("pubkey", "")
 
+    # --- inbound throttle (2026-08-26, P0 close) ---
+    # Reject BEFORE dedup-adjacent work, payment gating, or inference so a
+    # hostile pubkey can't drain the Groq free tier or mint unpaid invoices.
+    if _rate_limited(requester):
+        fb = build_event(7000, [["e", event_id], ["p", requester],
+                                ["status", "error"]],
+                         "rate limited — too many jobs, slow down")
+        await publish(ws, fb, relay_name)
+        log_job({"ts": time.time(), "job_id": event_id, "kind": kind,
+                 "relay": relay_name, "requester": requester,
+                 "outcome": "rate_limited"})
+        print(f"[THROTTLE] {requester[:8]} rate limited", flush=True)
+        return
+    if not _try_acquire_slot(requester):
+        fb = build_event(7000, [["e", event_id], ["p", requester],
+                                ["status", "error"]],
+                         "busy — too many jobs in flight, retry shortly")
+        await publish(ws, fb, relay_name)
+        log_job({"ts": time.time(), "job_id": event_id, "kind": kind,
+                 "relay": relay_name, "requester": requester,
+                 "outcome": "saturated"})
+        print(f"[THROTTLE] {requester[:8]} saturated", flush=True)
+        return
+    try:
+        await _handle_job_inner(ws, event, relay_name,
+                                kind, result_kind, event_id, requester)
+    finally:
+        _release_slot(requester)
+
+
+async def _handle_job_inner(ws, event, relay_name, kind, result_kind,
+                            event_id, requester):
     content = ""
     try:
         payload = json.loads(event.get("content") or "{}")
