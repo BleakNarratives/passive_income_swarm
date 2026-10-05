@@ -40,7 +40,7 @@ bash ./swarmctl doctor      # validate manifest + ledger + skills
 bash ./swarmctl cabinet     # print the cabinet (slots)
 bash ./swarmctl pull B3     # dispense Thoth
 bash ./swarmctl demo        # end-to-end smoke run
-bash ./run_tests.sh         # 153 stdlib unit tests
+bash ./run_tests.sh         # 179 stdlib unit tests
 ```
 
 See **[docs/SWARM.md](docs/SWARM.md)** for the architecture: the cabinet, the

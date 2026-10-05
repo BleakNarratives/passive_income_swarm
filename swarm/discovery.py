@@ -179,6 +179,30 @@ class ScoutRegistry:
         path = self.quarantine(script, reason="unregistered execution attempt")
         return {"script": _normalize(script), "status": FERAL, "quarantined": str(path)}
 
+    def sync_entities(self, entities: Any, schema: str = SCHEMA) -> List[Dict[str, Any]]:
+        """Auto-register the digest + schema of active scout/agent/daemon scripts.
+
+        Called on the first clean run of any scout in ``src/skill/`` or
+        ``projects/agents/scouts/``. Only real files are registered; manifest
+        occupants whose entrypoint is a module invocation or an absent path are
+        skipped (they cannot be hashed yet).
+        """
+        registered: List[Dict[str, Any]] = []
+        for entity in entities:
+            kind = getattr(entity, "kind", None)
+            if kind not in ("scout", "agent", "daemon", "subagent"):
+                continue
+            entry = str(getattr(entity, "entrypoint", "") or "").strip()
+            if not entry or entry.startswith("-"):
+                continue
+            candidate = Path(entry.split()[0])
+            if not candidate.is_file():
+                continue
+            if not self.in_allowed_roots(str(candidate)):
+                continue
+            registered.append(self.register(str(candidate), schema=schema))
+        return registered
+
     def all(self) -> List[Dict[str, Any]]:
         return list(self._scripts.values())
 

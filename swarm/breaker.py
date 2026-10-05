@@ -3,10 +3,14 @@ swarm.breaker — the Janus Guard (hard lock)
 ===========================================
 
 > "The Policy-as-Code engine MUST maintain a rolling counter of failed schema
->  validations and unverified SHA256 signatures. If >3 unverified sidecars or
->  invalid schema payloads attempt to touch WhorlBus within a single session
->  window, the bus auto-flushes uncommitted buffer states and locks into
+>  validations and unverified SHA256 signatures. If more than 3 unverified
+>  sidecars or invalid schema payloads attempt to touch WhorlBus within a single
+>  session window, the bus auto-flushes uncommitted buffer states and locks into
 >  ``STRICT_INGEST_ONLY`` mode until a manual ``domino.sh preflight`` passes."
+
+Threshold semantics: the lock trips once the rolling count **reaches**
+``threshold`` (default 3), i.e. on the 3rd schema/digest failure in the window.
+The count is configurable so an operator can tighten or loosen it per policy.
 
 Guarding both faces at once — the incoming door and the outgoing state — is why
 it is called Janus.
@@ -107,8 +111,8 @@ class IngestBreaker:
         now = time.time() if now is None else now
         self._prune(now)
         self.violations.append({"ts": _now_iso(), "epoch": now, "kind": kind, "detail": detail})
-        # ">3 within a single session window" — strictly greater than threshold.
-        if len(self.violations) > self.threshold and self.mode != MODE_STRICT:
+        # Lock once the rolling count reaches the threshold (default: 3rd failure).
+        if len(self.violations) >= self.threshold and self.mode != MODE_STRICT:
             self.trip(detail or kind, bus=self.bus, now=now)
             return True
         self.save()

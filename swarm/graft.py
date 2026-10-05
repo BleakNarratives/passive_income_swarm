@@ -225,6 +225,35 @@ class GraftGuard:
             )
         return round(moved, 4)
 
+    def absorb_adaptive_memory(self, loser: str, winner: str) -> Dict[str, Any]:
+        """Carry a loser's adaptive_memory decay/yield onto the winner.
+
+        ``merge_pheromones`` moves bus pheromones; this moves the state that
+        only exists in ``adaptive_memory.json`` so deprecating the loser loses
+        nothing. The absorbed density is re-deposited as a bus pheromone and the
+        yield is booked to the ledger.
+        """
+        ext = self._adaptive().get(loser)
+        if not ext:
+            return {"absorbed": False, "density": 0.0, "yield": 0.0}
+        density = float(ext.get("pheromone_density", 0.0))
+        yield_value = float(ext.get("incentives", 0.0)) + float(ext.get("revenue_msat", 0.0)) / 1000.0
+        if density > 0 and self.bus is not None:
+            self.bus.deposit(
+                emitter=winner,
+                trail=f"adaptive:{loser}",
+                strength=density,
+                note=f"absorbed adaptive_memory from {loser}",
+                lineage="projects/agents/scouts/graft",
+            )
+        if self.ledger is not None:
+            self.ledger.append(
+                "adaptive_memory_absorbed",
+                {"loser": loser, "winner": winner, "density": density, "yield": yield_value},
+                actor="graft_guard",
+            )
+        return {"absorbed": True, "density": density, "yield": yield_value}
+
     # -- the enforced path -------------------------------------------------
     def execute(
         self,

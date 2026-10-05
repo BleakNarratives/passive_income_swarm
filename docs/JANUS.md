@@ -87,8 +87,8 @@ If HC's SQLite ledger is the yield source, point `inspect()` at it there.
 **Implemented in** `swarm/breaker.py`.
 
 - `IngestBreaker` keeps a rolling window (`window_s`) of violations — failed
-  schema validations and unverified SHA256 signatures. On the **4th**
-  (strictly `> threshold`, default 3) it trips.
+  schema validations and unverified SHA256 signatures. It trips once the count
+  **reaches the threshold** (default 3, so the 3rd failure locks the bus).
 - On trip it calls `bus.flush()` first, so staged/uncommitted state is committed
   and never lost, then sets `STRICT_INGEST_ONLY` and persists to
   `circuit_breaker.json`.
@@ -149,6 +149,32 @@ scout — one `record_clean_run` call at the point the process returns 0.
    the SQLite ledger.
 3. `domino.sh preflight` → call `IngestBreaker.preflight_pass` on success.
 4. `SCOUT_REGISTRY.json` → confirm the path; call `record_clean_run` on clean exit.
-5. Re-run `bash ./run_tests.sh` — 153 tests, all stdlib.
+5. Re-run `bash ./run_tests.sh` — 179 tests, all stdlib.
+
+### Runnable reconciliation (whorl.py + lineage.py)
+
+Items 3 and 4 are automated so reconciliation is a command, not a code edit.
+`swarm/lineage.py::reconcile_with_proofs` and
+`swarm/whorl.py::reconcile_bus_path` compare the **active** roots / bus path
+against `PROOFS_AND_GATES.md` and the real `bus.jsonl` location:
+
+```bash
+bash ./swarmctl reconcile                              # source_absent → exit 0
+bash ./swarmctl reconcile --proofs PROOFS_AND_GATES.md # ok / drift (exit 1)
+bash ./swarmctl reconcile --expected-bus-path /srv/core/bus.jsonl
+```
+
+Both the roots and the bus path are overridable at the CLI, so matching
+`core_framework` needs **no source change**:
+
+```bash
+bash ./swarmctl --bus-path /srv/core/bus.jsonl \
+     --allowed-root src/skill/ --denied-root UNPACKED \
+     reconcile --proofs PROOFS_AND_GATES.md
+```
+
+Status values: `ok`, `drift` (with the exact differing roots/paths, exit 1), or
+`source_absent` (the document is not in this workspace yet, exit 0 — the active
+roots are used as-is).
 
 *BleakNarratives // Janus Guard v1*

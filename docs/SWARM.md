@@ -211,7 +211,7 @@ undeclared capability.
 
 ## 9. Honest status
 
-**Built and tested (153 stdlib unit tests):** ledger durability, registry
+**Built and tested (179 stdlib unit tests):** ledger durability, registry
 validation and slot addressing, vending/dispense idempotency, the skill
 self-improvement loop and certification gate, scout discovery/evaluation/audit,
 all forecast models + metrics + backtest + registry + anomaly detection,

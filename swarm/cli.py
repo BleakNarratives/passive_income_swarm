@@ -37,9 +37,14 @@ from .discovery import ScoutRegistry
 from .graft import GraftGuard
 from .incentives import ScoutIncentives
 from .ingest import Ingestor
-from .lineage import PURPOSE_SELF_MODIFY, PURPOSE_TELEMETRY, LineageGate
+from .lineage import (
+    PURPOSE_SELF_MODIFY,
+    PURPOSE_TELEMETRY,
+    LineageGate,
+    reconcile_with_proofs,
+)
 from .vending import VendingMachine, VendError
-from .whorl import WhorlBus
+from .whorl import WhorlBus, reconcile_bus_path
 
 __all__ = ["main", "build_context", "SEED_SKILLS"]
 
@@ -85,6 +90,9 @@ class Context:
         manifest: Optional[Path] = None,
         registry_path: Optional[str] = None,
         quarantine_dir: str = "/tmp/quarantine",
+        bus_path: Optional[str] = None,
+        allowed_roots: Optional[List[str]] = None,
+        denied_roots: Optional[List[str]] = None,
     ):
         self.root = root
         self.ledger = Ledger(root / "logs" / "swarm.jsonl")
@@ -102,18 +110,31 @@ class Context:
         self.machine = VendingMachine(self.registry, self.ledger, root=root)
         self.engine = PredictiveEngine(ledger=self.ledger, registry=self.models)
 
-        # Relay 2 — one bus for telemetry and pheromones.
-        self.bus = WhorlBus(root / "bus.jsonl", ledger=self.ledger)
-        # Relay 3 — live-lineage gate over self-modification.
-        self.lineage = LineageGate()
+        # Relay 2 — one bus for telemetry and pheromones (path overridable so the
+        # ingestor can be pointed at core_framework's real bus.jsonl).
+        self.bus = WhorlBus(Path(bus_path) if bus_path else root / "bus.jsonl", ledger=self.ledger)
+        # Relay 3 — live-lineage gate over self-modification (roots overridable
+        # to match PROOFS_AND_GATES.md without a code edit).
+        self.lineage = LineageGate(
+            allowed=tuple(allowed_roots) if allowed_roots else None,
+            denied=tuple(denied_roots) if denied_roots else None,
+        )
         # Incentive model — reward novelty, rarity and marketable niche intel.
         self.incentives = ScoutIncentives(store=self.skills, registry=self.registry)
         # Janus Guard — hard-lock breaker (holds the bus so a trip can flush it).
         self.breaker = IngestBreaker(root / "circuit_breaker.json", bus=self.bus)
+        # Enforce the telemetry contract inside the bus itself.
+        self.bus.attach_breaker(self.breaker)
         # Dynamic registry auto-discovery (queryable in strict mode).
         self.scout_registry = ScoutRegistry(
             path=registry_path, quarantine_dir=quarantine_dir
         )
+        # Auto-sync: register the digest + schema of any present, allowed scout
+        # script so first-run registration needs no manual step.
+        try:
+            self.scout_registry.sync_entities(self.registry)
+        except Exception:
+            pass
         self.ingestor = Ingestor(
             self.bus,
             self.ledger,
@@ -127,6 +148,8 @@ class Context:
         self.graft = GraftGuard(
             bus=self.bus, ledger=self.ledger, adaptive_memory_path=root / "adaptive_memory.json"
         )
+        # Preserve decay/yield before any gate evaluation, not just deprecation.
+        self.lineage.attach_guard(self.graft, preserve_into="live_lineage")
 
 
 def build_context(args: argparse.Namespace) -> Context:
@@ -137,6 +160,9 @@ def build_context(args: argparse.Namespace) -> Context:
         Path(manifest) if manifest else None,
         registry_path=getattr(args, "registry_path", None),
         quarantine_dir=getattr(args, "quarantine_dir", "/tmp/quarantine") or "/tmp/quarantine",
+        bus_path=getattr(args, "bus_path", None),
+        allowed_roots=getattr(args, "allowed_root", None),
+        denied_roots=getattr(args, "denied_root", None),
     )
 
 
@@ -412,6 +438,18 @@ def cmd_contract(ctx: Context, args: argparse.Namespace) -> int:
 
 
 def cmd_bus(ctx: Context, args: argparse.Namespace) -> int:
+    if args.action == "ingest":
+        result = ctx.bus.ingest()
+        print(json.dumps(
+            {
+                "mode": result["mode"],
+                "accepted": result["accepted"],
+                "rejected": result["rejected"],
+                "errors": result["errors"][:5],
+            },
+            indent=2,
+        ))
+        return 0 if result["mode"] == "OPEN" else 1
     if args.action == "pheromones":
         hottest = ctx.bus.hottest(args.n)
         if not hottest:
@@ -470,6 +508,15 @@ def cmd_breaker(ctx: Context, args: argparse.Namespace) -> int:
 
 
 def cmd_discovery(ctx: Context, args: argparse.Namespace) -> int:
+    if args.action in ("register", "check") and not args.script:
+        print(f"'{args.action}' requires a script path", file=sys.stderr)
+        return 2
+    if args.action == "sync":
+        registered = ctx.scout_registry.sync_entities(ctx.registry)
+        print(json.dumps(
+            {"registered": len(registered), "scripts": [e["script"] for e in registered]}, indent=2
+        ))
+        return 0
     if args.action == "register":
         try:
             entry = ctx.scout_registry.record_clean_run(args.script)
@@ -491,6 +538,23 @@ def cmd_graft(ctx: Context, args: argparse.Namespace) -> int:
     out = ctx.graft.execute(args.winner, args.loser, lambda: "graft-noop")
     print(json.dumps(out["decision"], indent=2))
     return 0
+
+
+def cmd_reconcile(ctx: Context, args: argparse.Namespace) -> int:
+    """JANUS checklist against whorl.py and lineage.py."""
+    lineage_report = reconcile_with_proofs(
+        args.proofs,
+        allowed=tuple(args.allowed_root) if args.allowed_root else tuple(ctx.lineage.allowed),
+        denied=tuple(args.denied_root) if args.denied_root else tuple(ctx.lineage.denied),
+    )
+    whorl_report = reconcile_bus_path(
+        ctx.bus.path, args.expected_bus_path if args.expected_bus_path else None
+    )
+    report = {"lineage": lineage_report, "whorl": whorl_report}
+    print(json.dumps(report, indent=2))
+    if lineage_report["status"] == "source_absent":
+        print("! PROOFS_AND_GATES.md not present — active roots used as-is (source_absent)")
+    return 1 if (lineage_report["status"] == "drift" or whorl_report["status"] == "drift") else 0
 
 
 RELAY_DIRECTIVES = [
@@ -535,6 +599,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", default=None, help="override cabinet manifest path")
     parser.add_argument("--registry-path", default=None, help="SCOUT_REGISTRY.json path (default ~/.config/freebuff)")
     parser.add_argument("--quarantine-dir", default="/tmp/quarantine")
+    parser.add_argument("--bus-path", default=None, help="override bus.jsonl path (core_framework)")
+    parser.add_argument("--allowed-root", action="append", default=None, help="override an allowed lineage root")
+    parser.add_argument("--denied-root", action="append", default=None, help="override a denied lineage root")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("cabinet", help="render the cabinet")
@@ -607,8 +674,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--file", default=None, help="path to JSON to validate")
     p.set_defaults(func=cmd_contract)
 
-    p = sub.add_parser("bus", help="Relay 2: inspect the WhorlBus")
-    p.add_argument("action", nargs="?", choices=["tail", "high", "pheromones"], default="tail")
+    p = sub.add_parser("bus", help="Relay 2: inspect / ingest the WhorlBus")
+    p.add_argument("action", nargs="?", choices=["tail", "high", "pheromones", "ingest"], default="tail")
     p.add_argument("-n", type=int, default=20)
     p.add_argument("--min", type=float, default=0.75)
     p.set_defaults(func=cmd_bus)
@@ -636,9 +703,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", nargs="?", choices=["status", "preflight"], default="status")
     p.set_defaults(func=cmd_breaker)
 
-    p = sub.add_parser("discovery", help="dynamic scout registry: register or gate a script")
-    p.add_argument("action", choices=["register", "check"])
-    p.add_argument("script")
+    p = sub.add_parser("discovery", help="dynamic scout registry: register, sync or gate a script")
+    p.add_argument("action", choices=["register", "check", "sync"])
+    p.add_argument("script", nargs="?")
     p.set_defaults(func=cmd_discovery)
 
     p = sub.add_parser("graft", help="anti-lobotomy pre-graft inspection and merge")
@@ -646,6 +713,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--winner", required=True)
     p.add_argument("--loser", required=True)
     p.set_defaults(func=cmd_graft)
+
+    p = sub.add_parser("reconcile", help="JANUS checklist against whorl.py + lineage.py")
+    p.add_argument("--proofs", default="PROOFS_AND_GATES.md")
+    p.add_argument("--expected-bus-path", default=None)
+    p.set_defaults(func=cmd_reconcile)
 
     return parser
 

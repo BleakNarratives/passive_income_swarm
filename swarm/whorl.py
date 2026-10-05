@@ -35,7 +35,7 @@ from typing import Any, Dict, Iterator, List, Optional
 from .contracts import Envelope, PayloadError
 from .ledger import Ledger
 
-__all__ = ["WhorlBus", "bus_now"]
+__all__ = ["WhorlBus", "bus_now", "reconcile_bus_path"]
 
 
 def bus_now() -> str:
@@ -64,6 +64,7 @@ class WhorlBus:
         self._lock = threading.RLock()
         self._cursor = 0  # number of records this consumer has already drained
         self._buffer: List[Envelope] = []
+        self._breaker: Any = None  # duck-typed; attach_breaker() wires it in
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     # -- publishing --------------------------------------------------------
@@ -172,6 +173,57 @@ class WhorlBus:
         """Move the consumer cursor (e.g. to replay from the start with 0)."""
         self._cursor = max(0, int(position))
 
+    # -- contract-enforcing ingestion --------------------------------------
+    def attach_breaker(self, breaker: Any) -> None:
+        """Attach a Janus Guard breaker (duck-typed: needs is_locked/record_violation)."""
+        self._breaker = breaker
+
+    @property
+    def strict(self) -> bool:
+        """True while the attached breaker is locked in STRICT_INGEST_ONLY."""
+        breaker = self._breaker
+        return bool(breaker is not None and breaker.is_locked())
+
+    def ingest(self) -> Dict[str, Any]:
+        """Drain the bus, enforcing the telemetry contract on every payload.
+
+        Replaces sidecar polling: callers ingest directly from ``bus.jsonl``.
+        Every record must present a valid ``content_sha256`` digest; a record
+        that does not is **rejected** (never silently skipped) and counted as a
+        violation on the attached breaker. While the breaker is locked into
+        ``STRICT_INGEST_ONLY`` the bus refuses to ingest at all until a preflight
+        passes.
+        """
+        breaker = self._breaker
+        if breaker is not None and breaker.is_locked():
+            return {
+                "mode": "STRICT_INGEST_ONLY",
+                "accepted": 0,
+                "rejected": 0,
+                "envelopes": [],
+                "errors": [],
+            }
+        envelopes: List[Envelope] = []
+        errors: List[str] = []
+        if self.path.exists():
+            with self.path.open("r", encoding="utf-8") as fh:
+                lines = [ln.strip() for ln in fh if ln.strip()]
+            for line in lines[self._cursor :]:
+                try:
+                    envelopes.append(Envelope.from_dict(json.loads(line)))
+                except (ValueError, TypeError) as exc:
+                    errors.append(str(exc))
+                    if breaker is not None:
+                        breaker.record_violation("schema_or_digest", str(exc))
+            self._cursor = len(lines)
+        return {
+            "mode": "OPEN",
+            "accepted": len(envelopes),
+            "rejected": len(errors),
+            "envelopes": envelopes,
+            "errors": errors,
+        }
+
     def of_kind(self, kind: str) -> List[Envelope]:
         return [e for e in self.records() if e.kind == kind]
 
@@ -190,6 +242,20 @@ class WhorlBus:
                 count += 1
                 yield record
             time.sleep(poll_s)
+
+    def describe(self) -> Dict[str, Any]:
+        """Effective configuration + the interfaces the Janus Guard depends on."""
+        return {
+            "path": str(self.path),
+            "parent_exists": self.path.parent.exists(),
+            "exists": self.path.exists(),
+            "capabilities": {
+                "stage": hasattr(self, "stage"),
+                "flush": hasattr(self, "flush"),
+                "pheromone_by_emitter": hasattr(self, "pheromone_by_emitter"),
+                "high_confidence": hasattr(self, "high_confidence"),
+            },
+        }
 
     # -- pheromone layer ---------------------------------------------------
     def pheromone_map(self, half_life_s: Optional[float] = None, now: Optional[float] = None) -> Dict[str, float]:
@@ -245,3 +311,35 @@ class WhorlBus:
         for env in staged:
             self.publish(env)
         return len(staged)
+
+
+def reconcile_bus_path(configured: str | Path, expected: Optional[str | Path] = None) -> Dict[str, Any]:
+    """Checklist item 4: is the ingestor pointed at the real ``bus.jsonl``?
+
+    Compares the configured bus path against an expected one (e.g. where
+    ``core_framework`` keeps it) and reports drift with the two paths.
+    """
+    configured_p = Path(configured)
+    drift: List[Dict[str, str]] = []
+    if expected is not None and str(configured_p) != str(Path(expected)):
+        drift.append(
+            {
+                "issue": "bus path differs",
+                "configured": str(configured_p),
+                "expected": str(Path(expected)),
+            }
+        )
+    capabilities = {
+        "stage": hasattr(WhorlBus, "stage"),
+        "flush": hasattr(WhorlBus, "flush"),
+        "pheromone_by_emitter": hasattr(WhorlBus, "pheromone_by_emitter"),
+        "high_confidence": hasattr(WhorlBus, "high_confidence"),
+    }
+    return {
+        "configured": str(configured_p),
+        "expected": str(Path(expected)) if expected is not None else None,
+        "parent_exists": configured_p.parent.exists(),
+        "capabilities": capabilities,
+        "drift": drift,
+        "status": "drift" if drift else "ok",
+    }

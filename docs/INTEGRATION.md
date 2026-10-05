@@ -182,6 +182,35 @@ shell config.
 3. Confirm `PROOFS_AND_GATES.md`'s roots match `ALLOWED_ROOTS` / `DENIED_ROOTS`;
    adjust the two constants if not.
 4. Point the ingestor's bus path at the real `bus.jsonl` if it lives elsewhere.
-5. Re-run `bash ./run_tests.sh` — 153 tests, all stdlib.
+5. Re-run `bash ./run_tests.sh` — 179 tests, all stdlib.
+
+---
+
+## Enforcement (where the contract is actually applied)
+
+- **`whorl.py` — the bus enforces its own contract.** `WhorlBus.ingest()` drains
+  `bus.jsonl` directly (no sidecar polling) and validates **every** record's
+  `content_sha256`. A bad digest is rejected *and recounted* — never silently
+  skipped — via the attached breaker (`bus.attach_breaker(breaker)`).
+- **`whorl.py` — hard lock.** Once the rolling counter *reaches* 3 failures in
+  the window, `bus.strict` is true and `ingest()` returns `STRICT_INGEST_ONLY`
+  with nothing accepted, until `IngestBreaker.preflight_pass()` (a
+  `domino.sh preflight`) runs.
+- **`lineage.py` — migration before *every* evaluation.** Attach a guard with
+  `gate.attach_guard(guard, preserve_into=...)` and `check()` merges the
+  module's pheromones (and absorbs its `adaptive_memory.json` decay/yield) into
+  the sink **before** the gate decides — once per module, so no double-count.
+  `deprecate_module(loser, winner, guard, gate, ledger)` does the same ahead of
+  deprecation and refuses without a guard, so no state is ever lost to a
+  clean-up.
+- **`discovery.py` — auto-registry sync.** `ScoutRegistry.sync_entities()`
+  registers the `content_sha256` + schema of active scout/agent/daemon scripts on
+  first clean run; unregistered execution is quarantined to `/tmp/quarantine/`.
+
+```bash
+bash ./swarmctl bus ingest                 # contract-enforced drain (exit 1 while locked)
+bash ./swarmctl discovery sync             # auto-register active scouts
+bash ./swarmctl reconcile --proofs PROOFS_AND_GATES.md
+```
 
 *BleakNarratives // integration relays v1*
