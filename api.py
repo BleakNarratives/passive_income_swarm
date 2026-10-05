@@ -31,7 +31,7 @@ def read_root():
 def execute_swarm_task(payload: SwarmTaskRequest):
     try:
         # Log incoming billable/executable task
-        log_dir = "$HOME/passive_income_swarm/logs"
+        log_dir = os.path.join(os.path.expanduser("~"), "passive_income_swarm", "logs")
         os.makedirs(log_dir, exist_ok=True)
         
         task_record = {

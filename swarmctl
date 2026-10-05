@@ -1,0 +1,6 @@
+#!/bin/bash
+# swarmctl — control plane entry point.
+# Run as: bash ./swarmctl <command>   (the executable bit may be stripped on deploy)
+set -euo pipefail
+cd "$(dirname "$0")"
+exec python3 -m swarm.cli "$@"

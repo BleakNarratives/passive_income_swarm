@@ -1,0 +1,297 @@
+{
+  "version": 1,
+  "cabinet": { "columns": "ABCDEF", "rows": 6 },
+  "capabilities": {
+    "llm.generate": {
+      "provider": "groq",
+      "kind": "inference",
+      "env": ["GROQ_API_KEY"],
+      "notes": "openai/gpt-oss-120b primary, qwen3 fallback (llama-3.3-70b retired 2026)"
+    },
+    "llm.embed": { "provider": "local", "kind": "inference", "env": [] },
+    "net.nostr": {
+      "provider": "relay",
+      "kind": "transport",
+      "env": [],
+      "notes": "wss relays: relay.primal.net, nos.lol, relay.damus.io"
+    },
+    "net.http": { "provider": "stdlib", "kind": "transport", "env": [] },
+    "fs.read": { "provider": "local", "kind": "storage", "env": [] },
+    "fs.write": { "provider": "local", "kind": "storage", "env": [] },
+    "shell.exec": { "provider": "local", "kind": "runtime", "env": [] },
+    "data.ledger": { "provider": "local", "kind": "storage", "env": [] },
+    "pay.lnurl": {
+      "provider": "coinos",
+      "kind": "payments",
+      "env": ["LNURL_LUD16"],
+      "notes": "LNURL-pay resolve/invoice/verify; lud16 from keys/nwc.secret"
+    },
+    "market.search": { "provider": "github", "kind": "discovery", "env": ["GITHUB_TOKEN"] },
+    "repo.gh": { "provider": "github", "kind": "devops", "env": ["GITHUB_TOKEN"] }
+  },
+
+  "entities": [
+    {
+      "id": "dvm_worker", "kind": "daemon", "display": "DVM Worker", "slot": "A1",
+      "role": "NIP-90 data vending machine — serves AI jobs over Nostr, earns sats",
+      "runtime": "python", "entrypoint": "nostr_dvm/dvm_worker.py",
+      "skills": ["nip90_serve", "groq_inference"],
+      "capabilities": ["net.nostr", "llm.generate", "pay.lnurl", "data.ledger"],
+      "triggers": [{ "kind": "daemon" }],
+      "resources": { "restart": "always", "concurrency": 4, "timeout_s": 300, "mem_mb": 512 },
+      "tags": ["revenue", "live"]
+    },
+    {
+      "id": "payment_rail", "kind": "daemon", "display": "Payment Rail", "slot": "B1",
+      "role": "LNURL-pay invoicing + settlement polling against coinos.io",
+      "runtime": "python", "entrypoint": "nostr_dvm/payment_rail.py",
+      "skills": ["lnurl_invoice", "settlement_poll"],
+      "capabilities": ["pay.lnurl", "net.http", "data.ledger"],
+      "resources": { "restart": "on-failure", "concurrency": 1, "timeout_s": 60 },
+      "tags": ["revenue", "payments"]
+    },
+    {
+      "id": "dvm_listener", "kind": "daemon", "display": "Relay Listener", "slot": "C1",
+      "role": "subscribes kinds 5002/5003 across public relays",
+      "runtime": "python", "entrypoint": "nostr_dvm/bin/listener.py",
+      "capabilities": ["net.nostr", "data.ledger"],
+      "resources": { "restart": "always", "concurrency": 1 },
+      "tags": ["revenue"]
+    },
+    {
+      "id": "fiverr_watch", "kind": "daemon", "display": "Fiverr Watch", "slot": "D1",
+      "role": "polls Fiverr for inbound orders and queue position",
+      "runtime": "bash", "entrypoint": "fiverr/fiverr_watch.sh",
+      "capabilities": ["net.http", "data.ledger"],
+      "resources": { "restart": "on-failure" },
+      "tags": ["revenue", "marketplace"]
+    },
+
+    {
+      "id": "api_gateway", "kind": "daemon", "display": "API Gateway", "slot": "A2",
+      "role": "FastAPI task router for customers and internal dispatch",
+      "runtime": "python", "entrypoint": "api.py",
+      "skills": ["task_route"],
+      "capabilities": ["net.http", "fs.write", "data.ledger"],
+      "resources": { "restart": "always", "timeout_s": 60 },
+      "tags": ["infra"]
+    },
+    {
+      "id": "supervisor", "kind": "daemon", "display": "Supervisor", "slot": "B2",
+      "role": "health checks, restart backoff and per-daemon circuit breakers",
+      "runtime": "python", "entrypoint": "-m swarm.cli supervise",
+      "skills": ["health_probe", "breaker_trip"],
+      "capabilities": ["data.ledger", "shell.exec"],
+      "resources": { "restart": "always" },
+      "tags": ["infra", "core"]
+    },
+    {
+      "id": "network_monitor", "kind": "daemon", "display": "Network Monitor", "slot": "C2",
+      "role": "brings the gateway up/down with connectivity",
+      "runtime": "bash", "entrypoint": "network_monitor.sh",
+      "capabilities": ["shell.exec", "net.http"],
+      "resources": { "restart": "on-failure" },
+      "tags": ["infra"]
+    },
+    {
+      "id": "mutation_daemon", "kind": "daemon", "display": "Mutation Engine", "slot": "D2",
+      "role": "evolves agent DNA through bounded, breaker-guarded mutation cycles",
+      "runtime": "bash", "entrypoint": "dna_mutation/mutate.sh",
+      "skills": ["mutate_dna"],
+      "capabilities": ["shell.exec", "fs.write", "data.ledger"],
+      "resources": { "restart": "on-failure", "concurrency": 1 },
+      "tags": ["evolution"]
+    },
+
+    {
+      "id": "mrs_higgins", "kind": "agent", "display": "Mrs. Higgins", "slot": "A3",
+      "role": "content creation and delivery",
+      "persona": "higgins", "model": "groq:openai/gpt-oss-120b",
+      "runtime": "bash", "entrypoint": "control/inbox/call_mrs_higgins.sh",
+      "skills": ["longform_writing", "hook_craft"],
+      "capabilities": ["llm.generate", "fs.write", "data.ledger"],
+      "tags": ["content"]
+    },
+    {
+      "id": "thoth", "kind": "agent", "display": "Thoth", "slot": "B3",
+      "role": "market analysis and opportunity detection",
+      "persona": "thoth", "model": "groq:openai/gpt-oss-120b",
+      "runtime": "bash", "entrypoint": "analysis/monitor.sh",
+      "skills": ["market_analysis", "opportunity_rank"],
+      "capabilities": ["llm.generate", "net.nostr", "data.ledger"],
+      "tags": ["analysis"]
+    },
+    {
+      "id": "molt", "kind": "agent", "display": "Molt", "slot": "C3",
+      "role": "autonomous profile improvement across Fiverr / Upwork / Reddit",
+      "persona": "huckster", "model": "groq:qwen/qwen3.6-27b",
+      "runtime": "bash", "entrypoint": "dna_mutation/factory/molt_optimizer.sh",
+      "skills": ["profile_optimize", "listing_copy", "pricing_tune"],
+      "capabilities": ["llm.generate", "fs.write", "data.ledger"],
+      "tags": ["marketing"]
+    },
+    {
+      "id": "curation_agent", "kind": "agent", "display": "Curator", "slot": "D3",
+      "role": "curates news, summarizes, prepares posts",
+      "persona": "bleak", "runtime": "bash", "entrypoint": "curation/curate.sh",
+      "skills": ["summarize", "source_rank"],
+      "capabilities": ["llm.generate", "net.http", "fs.write"],
+      "tags": ["content"]
+    },
+    {
+      "id": "marketing_agent", "kind": "agent", "display": "Promoter", "slot": "E3",
+      "role": "cross-platform promotion and ad copy",
+      "persona": "huckster", "runtime": "bash", "entrypoint": "marketing/promote.sh",
+      "skills": ["ad_copy", "channel_select"],
+      "capabilities": ["llm.generate", "net.http", "data.ledger"],
+      "tags": ["marketing"]
+    },
+
+    {
+      "id": "truthsleuth", "kind": "scout", "display": "TruthSleuth", "slot": "A4",
+      "role": "code-smell and truth audit of the whole tree",
+      "runtime": "python", "entrypoint": "-m swarm.cli doctor",
+      "skills": ["smell_sniff", "doc_drift_detect"],
+      "capabilities": ["fs.read", "shell.exec", "data.ledger"],
+      "triggers": [{ "kind": "cron", "every": "3600" }],
+      "tags": ["quality"]
+    },
+    {
+      "id": "dominance_scout", "kind": "scout", "display": "Dominance", "slot": "B4",
+      "role": "scans rival architectures for competitive intelligence",
+      "runtime": "bash", "entrypoint": "dominance/intelligence/scan_rivals.sh",
+      "skills": ["rival_scan", "pattern_extract"],
+      "capabilities": ["market.search", "repo.gh", "data.ledger"],
+      "triggers": [{ "kind": "cron", "every": "21600" }],
+      "tags": ["intel"]
+    },
+    {
+      "id": "lead_scout", "kind": "scout", "display": "LeadScan", "slot": "C4",
+      "role": "mines public signals for warm leads",
+      "runtime": "bash", "entrypoint": "leads/scan_leads.sh",
+      "skills": ["lead_mine", "signal_score"],
+      "capabilities": ["market.search", "repo.gh", "data.ledger"],
+      "triggers": [{ "kind": "cron", "every": "7200" }],
+      "tags": ["revenue"]
+    },
+    {
+      "id": "skill_scout", "kind": "scout", "display": "Skill Scout", "slot": "D4",
+      "role": "discovers emergent skills from repeated ledger patterns",
+      "runtime": "python", "entrypoint": "-m swarm.cli scout discover",
+      "skills": ["pattern_mine", "skill_propose"],
+      "capabilities": ["data.ledger", "fs.write"],
+      "triggers": [{ "kind": "cron", "every": "1800" }],
+      "tags": ["core", "evolution"]
+    },
+    {
+      "id": "augur", "kind": "scout", "display": "Augur", "slot": "E4",
+      "role": "runs forecasts and surfaces anomalies ahead of the pack",
+      "runtime": "python", "entrypoint": "-m swarm.cli forecast revenue --horizon 24",
+      "skills": ["forecast", "anomaly_detect"],
+      "capabilities": ["data.ledger", "llm.generate"],
+      "triggers": [{ "kind": "cron", "every": "3600" }],
+      "tags": ["prediction", "core"]
+    },
+
+    {
+      "id": "whorl_sensor", "kind": "scout", "display": "Whorl Sensor", "slot": "E1",
+      "role": "Elixir scout streaming niche + pheromone signals onto the WhorlBus",
+      "runtime": "elixir", "entrypoint": "projects/agents/scouts/whorl_sensor.exs",
+      "skills": ["niche_stream", "signal_score"],
+      "capabilities": ["net.nostr", "data.ledger"],
+      "triggers": [{ "kind": "daemon" }],
+      "resources": { "restart": "always", "concurrency": 4 },
+      "tags": ["polyglot", "elixir", "realtime"]
+    },
+    {
+      "id": "market_watch", "kind": "scout", "display": "Market Watch", "slot": "F1",
+      "role": "Node.js scout watching marketplace listings and demand shifts",
+      "runtime": "node", "entrypoint": "projects/agents/scouts/market_watch.js",
+      "skills": ["market_analysis", "listing_watch"],
+      "capabilities": ["net.http", "llm.generate", "data.ledger"],
+      "triggers": [{ "kind": "cron", "every": "3600" }],
+      "tags": ["polyglot", "node", "market"]
+    },
+    {
+      "id": "scout_forge", "kind": "daemon", "display": "Scout Forge", "slot": "E2",
+      "role": "Compiled C++ high-throughput niche scanner (no interpreter)",
+      "runtime": "cpp", "entrypoint": "projects/agents/scouts/forge/scout_forge",
+      "skills": ["pattern_extract", "anomaly_detect"],
+      "capabilities": ["fs.read", "data.ledger"],
+      "resources": { "restart": "on-failure", "concurrency": 8, "mem_mb": 256 },
+      "tags": ["polyglot", "cpp", "throughput"]
+    },
+    {
+      "id": "edge_probe", "kind": "scout", "display": "Edge Probe", "slot": "F2",
+      "role": "Deno/TypeScript edge scout for latency and reachability intel",
+      "runtime": "deno", "entrypoint": "projects/agents/scouts/edge_probe.ts",
+      "skills": ["reachability_probe"],
+      "capabilities": ["net.http", "data.ledger"],
+      "tags": ["polyglot", "deno", "edge"]
+    },
+    {
+      "id": "higgins_hook", "kind": "subagent", "display": "Hook Smith", "slot": "A5",
+      "parent": "mrs_higgins", "role": "writes and ranks opening hooks",
+      "persona": "higgins", "model": "groq:qwen/qwen3.6-27b",
+      "skills": ["hook_craft"], "capabilities": ["llm.generate"]
+    },
+    {
+      "id": "higgins_editor", "kind": "subagent", "display": "Line Editor", "slot": "B5",
+      "parent": "mrs_higgins", "role": "tightens drafts, enforces house voice",
+      "persona": "higgins", "skills": ["line_edit"], "capabilities": ["llm.generate", "fs.read"]
+    },
+    {
+      "id": "thoth_market", "kind": "subagent", "display": "Market Desk", "slot": "C5",
+      "parent": "thoth", "role": "prices opportunities and competitor gaps",
+      "persona": "thoth", "skills": ["market_analysis"], "capabilities": ["llm.generate", "net.http"]
+    },
+    {
+      "id": "thoth_forecast", "kind": "subagent", "display": "Forecast Desk", "slot": "D5",
+      "parent": "thoth", "role": "backtests models and emits calibrated projections",
+      "persona": "thoth", "skills": ["forecast"], "capabilities": ["data.ledger"]
+    },
+    {
+      "id": "molt_profile", "kind": "subagent", "display": "Profile Desk", "slot": "E5",
+      "parent": "molt", "role": "rewrites gig profiles per platform",
+      "persona": "huckster", "skills": ["profile_optimize"], "capabilities": ["llm.generate", "fs.write"]
+    },
+    {
+      "id": "beam_analyst", "kind": "subagent", "display": "Beam Analyst", "slot": "F4",
+      "parent": "thoth", "role": "Elixir/BEAM analyst crunching high-volume intel streams",
+      "persona": "thoth", "runtime": "elixir", "entrypoint": "projects/agents/scouts/beam_analyst.exs",
+      "skills": ["market_analysis", "pattern_mine"], "capabilities": ["data.ledger"],
+      "tags": ["polyglot", "elixir"]
+    },
+    {
+      "id": "wasm_gate", "kind": "daemon", "display": "WASM Gate", "slot": "F6",
+      "role": "Compiled sandbox gateway for untrusted signal ingestion",
+      "runtime": "binary", "entrypoint": "projects/agents/scouts/wasm_gate",
+      "skills": ["signal_score"],
+      "capabilities": ["data.ledger", "fs.read"],
+      "resources": { "restart": "on-failure", "mem_mb": 128 },
+      "tags": ["polyglot", "binary", "sandbox"]
+    },
+    {
+      "id": "molt_pricing", "kind": "subagent", "display": "Pricing Desk", "slot": "F5",
+      "parent": "molt", "role": "tunes gig pricing against demand signals",
+      "persona": "huckster", "skills": ["pricing_tune"], "capabilities": ["data.ledger"]
+    },
+
+    {
+      "id": "persona_higgins", "kind": "persona", "display": "Higgin's Voice", "slot": "A6",
+      "role": "warm, sharp, precise matriarch; never saccharine"
+    },
+    {
+      "id": "persona_thoth", "kind": "persona", "display": "Thoth's Voice", "slot": "B6",
+      "role": "oracular analyst; terse, evidence-first, cites numbers"
+    },
+    {
+      "id": "persona_bleak", "kind": "persona", "display": "Bleak", "slot": "C6",
+      "role": "noir narrator; dry, unsentimental, quietly funny"
+    },
+    {
+      "id": "persona_huckster", "kind": "persona", "display": "The Huckster", "slot": "D6",
+      "role": "gifted close; sells outcomes, never overpromises"
+    }
+  ]
+}

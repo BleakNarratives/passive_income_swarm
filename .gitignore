@@ -1,2 +1,19 @@
 keys/nostr.key
 keys/nwc.secret
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Swarm control plane — generated runtime state (not source)
+logs/swarm.jsonl
+logs/swarm.jsonl.*.bak
+logs/supervisor_state.json
+skills/registry.json
+data/models/
+control/pending/*.job.json
+control/outbox/*.result.json
+bus.jsonl
+bus.jsonl.*.bak
+circuit_breaker.json
+SCOUT_REGISTRY.json
