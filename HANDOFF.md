@@ -1,11 +1,30 @@
 # HANDOFF.md — swarm control plane + paid rail
 
-**Status: 265/265 tests pass (`bash ./run_tests.sh`), `compileall` clean.**
+**Status: 434/434 tests pass (`bash ./run_tests.sh`).**
 
 This file replaces an earlier handoff that claimed "complete and verified" while
 the money path was unsound. Two things were true at once: the control plane was
 well built and well tested, and the paid execution path could serve unpaid work.
 Both are recorded here so the next agent does not have to rediscover them.
+
+## Current surface (2026-11-08)
+
+Since the paid rail and connections work, four operator surfaces landed and are
+tested:
+
+| Surface | Where | What it does |
+| --- | --- | --- |
+| Schedule health | `swarm/scheduler.py`, `swarmctl cron status\|tune\|install` | parses the cron block it installed, reports silent/starved/thrashing schedules, tunes with a deadband and dwell |
+| One-line install | `tools/install.sh` | clone or fast-forward, then bootstrap; safe to re-run |
+| Portal | `tools/portal.sh` | one bounded block in the shell: location, health dot, agent counts; no animation, no background work |
+| Capability evidence | `swarm/capabilities.py`, `swarmctl capabilities` | states each capability with dated, machine-scoped evidence; imports another list upward only |
+
+`docs/CAPABILITIES.md` covers the evidence model. `docs/SYNTAX.md` §11 preserves
+the portal, NAT and coordination decisions.
+
+**Next, and only next:** `swarmctl ps` must distinguish declared / available /
+active / recently observed. The 34 entities in `cabinet.json` are a roster, not
+a running fleet. No new architecture before that lands.
 
 ## The paid rail (2026-11-08)
 

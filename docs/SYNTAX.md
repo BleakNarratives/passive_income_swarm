@@ -148,7 +148,9 @@ a diagram tidy. No forced monorepo.
 3. **Path leases and the plan-before-act gate** in the coordinator.
 4. **Bus topics** for delegation, challenge and verification.
 5. **RepoSherpa as the first coordinator adapter** — read, plan, verify.
-6. **Experience:** per-agent `ps`, then views over the same snapshot.
+6. **Experience:** per-agent `ps`, then views over the same snapshot. `ps`
+   separates **declared / available / active / recently observed**; the
+   34-entity roster is not telemetry.
 7. **NatHub sync**; then ShipWrekD, ModMind and Tailor as separate front-ends.
 8. **Grim identity last.** It decorates the experience; it never becomes the
    intelligence.
@@ -178,3 +180,36 @@ that requires all the others first is not a step, it is a rewrite.
 - What budget and permission model governs subagent recruitment?
 - Which parts of MotherBrain are policy (public) and which are configuration
   (private)?
+
+---
+
+## 11. Preserved decisions (2026-11-08)
+
+Re-affirmed at the end of the first build pass. These are constraints on later
+work, not preferences to rediscover.
+
+- **The portal is a control surface, not a dashboard.** Bounded output, one
+  glance, no animation, no background activity competing for attention. It
+  reports; it does not campaign.
+- **NAT is the memory model.** Checkpoint automatically before an agent writes,
+  name checkpoints by intent, keep a reliable `last-good` recovery point, and
+  keep Git as an interoperability adapter rather than the mental model. A wing
+  that bypasses this is not compliant with the direction.
+- **Syntax coordinates capabilities; it does not swallow projects.** Agents,
+  tools, memory, rendering and applications cooperate through interfaces. One
+  experience, independent components, no forced monorepo.
+
+### Roster is not telemetry
+
+`swarm/cabinet.json` declares 34 entities. That is a manifest, not a running
+fleet, and it is not evidence that 34 agents are operational. The `swarmctl ps`
+milestone (step 6) must separate four things explicitly:
+
+| column | question |
+| --- | --- |
+| declared | is it in the manifest? |
+| available | can its runtime and entrypoint be resolved here? |
+| active | is there a process or recent heartbeat? |
+| observed | is there dated evidence (ledger, bus, capability record) that it ran? |
+
+Until `ps` draws those lines, "34 agents" is a roster count, not a status.
