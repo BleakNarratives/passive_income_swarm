@@ -9,6 +9,7 @@
 #   ./tools/bootstrap.sh --dry-run    # print the cron block, change nothing
 #   ./tools/bootstrap.sh --no-pull    # skip git, just chmod + cron
 #   ./tools/bootstrap.sh --no-cron    # skip cron
+#   ./tools/install.sh                # clone or update first, then run this
 #   ./tools/bootstrap.sh --uninstall  # remove the cron block, keep everything else
 #
 # The cron block is fenced by markers, so re-running replaces it instead of
