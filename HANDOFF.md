@@ -1,6 +1,6 @@
 # HANDOFF.md — swarm control plane + paid rail
 
-**Status: 434/434 tests pass (`bash ./run_tests.sh`).**
+**Status: 449/449 tests pass (`bash ./run_tests.sh`).**
 
 This file replaces an earlier handoff that claimed "complete and verified" while
 the money path was unsound. Two things were true at once: the control plane was
@@ -22,9 +22,15 @@ tested:
 `docs/CAPABILITIES.md` covers the evidence model. `docs/SYNTAX.md` §11 preserves
 the portal, NAT and coordination decisions.
 
-**Next, and only next:** `swarmctl ps` must distinguish declared / available /
-active / recently observed. The 34 entities in `cabinet.json` are a roster, not
-a running fleet. No new architecture before that lands.
+**`swarmctl ps` now draws those lines.** It reads the process table and the
+ledger and reports each entity as declared, available, active and recently
+observed. Measured in this workspace: **34 declared, 18 available, 4 n/a
+(personas), 12 unavailable** (6 entrypoints absent, 6 subagents with none), **0
+active, 0 observed**. That is the honest state — the roster is not a fleet, and
+no process was invented to make the table look busy.
+
+**Next:** whichever capability or entity the operator actually needs running.
+No new architecture before that.
 
 ## The paid rail (2026-11-08)
 

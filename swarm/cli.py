@@ -40,6 +40,8 @@ from .discovery import ScoutRegistry
 from .graft import GraftGuard
 from .hooks import probe as probe_hooks, summary as hook_summary, to_json as hooks_json
 from .market_search import SOURCES as MARKET_SOURCES, search as market_search_report
+from .ps import format_report as ps_text
+from .ps import report as ps_report
 from .readiness import (
     format_report as readiness_text,
     readiness as run_readiness,
@@ -811,6 +813,19 @@ def cmd_capabilities(ctx: Context, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ps(ctx: Context, args: argparse.Namespace) -> int:
+    """Declared, available, active and observed are four different things."""
+    payload = ps_report(
+        ctx.root,
+        ctx.registry,
+        ctx.ledger,
+        observed_window_s=args.window * 3600.0,
+        active_window_s=args.active_window,
+    )
+    print(json.dumps(payload, indent=2, sort_keys=True) if args.json else ps_text(payload))
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # parser
 # ---------------------------------------------------------------------------
@@ -1041,6 +1056,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--strict", action="store_true", help="exit 1 when anything is blocked")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_capabilities)
+
+    p = sub.add_parser(
+        "ps", help="declared, available, active and observed are not the same thing"
+    )
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--window", type=float, default=24.0, help="hours counted as recently observed")
+    p.add_argument(
+        "--active-window", type=float, default=300.0, help="seconds a heartbeat stays live"
+    )
+    p.set_defaults(func=cmd_ps)
 
     return parser
 

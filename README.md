@@ -37,6 +37,12 @@ builds on the cabinet and the connection audit instead of replacing them, and
 `capabilities import` merges another machine's list without lowering a state.
 See [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
 
+`./swarmctl ps` keeps the roster honest: every entity is reported as
+**declared**, **available** (runtime and entrypoint resolvable here), **active**
+(live process or recent heartbeat) and **recently observed** (dated ledger
+evidence). It reads the process table and the ledger; it never starts anything,
+and a manifest entry is never counted as a running agent.
+
 ## Quick Start
 
 ```bash

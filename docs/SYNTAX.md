@@ -150,7 +150,8 @@ a diagram tidy. No forced monorepo.
 5. **RepoSherpa as the first coordinator adapter** — read, plan, verify.
 6. **Experience:** per-agent `ps`, then views over the same snapshot. `ps`
    separates **declared / available / active / recently observed**; the
-   34-entity roster is not telemetry.
+   34-entity roster is not telemetry. *Started:* `swarm/ps.py` + `swarmctl ps`
+   read the process table and ledger; no view layer over it yet.
 7. **NatHub sync**; then ShipWrekD, ModMind and Tailor as separate front-ends.
 8. **Grim identity last.** It decorates the experience; it never becomes the
    intelligence.
@@ -212,4 +213,6 @@ milestone (step 6) must separate four things explicitly:
 | active | is there a process or recent heartbeat? |
 | observed | is there dated evidence (ledger, bus, capability record) that it ran? |
 
-Until `ps` draws those lines, "34 agents" is a roster count, not a status.
+`swarmctl ps` now draws those lines (2026-11-08), and tests pin the distinction.
+"34 agents" is still a roster count; only the active and observed columns make
+it a status.
