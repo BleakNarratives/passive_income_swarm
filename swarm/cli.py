@@ -50,6 +50,12 @@ from .lifecycle import (
 )
 from .unit_audit import audit as audit_unit, format_report as unit_text
 from .bridge import publish as bridge_publish, format_report as bridge_text
+from .scheduler import (
+    status as cron_status,
+    tune as cron_tune,
+    format_report as cron_tune_text,
+    health_report as cron_health_text,
+)
 from .incentives import ScoutIncentives
 from .ingest import Ingestor
 from .lineage import (
@@ -715,6 +721,21 @@ def cmd_bridge(ctx: Context, args: argparse.Namespace) -> int:
         return 0
 
 
+def cmd_cron(ctx: Context, args: argparse.Namespace) -> int:
+    """Health of the schedule, and a cadence that only moves when it earns it."""
+    if args.action == "status":
+        report = cron_status(ctx.root)
+        print(json.dumps(report, indent=2, sort_keys=True) if args.json else cron_health_text(report))
+        return 0 if report.get("healthy") else 1
+    result = cron_tune(
+        ctx.root, apply=args.apply, market_query=args.market, state_path=args.state_path
+    )
+    print(json.dumps(result, indent=2, sort_keys=True) if args.json else cron_tune_text(result))
+    if result.get("error"):
+        return 1
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # parser
 # ---------------------------------------------------------------------------
@@ -919,6 +940,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--export", default=None, help="write console telemetry JSON to this path")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_bridge)
+
+    p = sub.add_parser(
+        "cron", help="is the schedule alive, and is this cadence still the right one?"
+    )
+    p.add_argument("action", nargs="?", choices=["status", "tune", "install"], default="status")
+    p.add_argument("--apply", action="store_true", help="install the tuned cadence")
+    p.add_argument("--market", default=None, help="also take a market reading (network)")
+    p.add_argument("--state-path", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_cron)
 
     return parser
 

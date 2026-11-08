@@ -234,6 +234,46 @@ swarmctl bridge                       # publish + export
 swarmctl --bus-path bus.jsonl ingest  # the rest of the swarm consumes it
 ```
 
+## Cron health, and a schedule that settles
+
+Cron fails silently: a typo'd command, a missing interpreter, an expired
+credential — all of it looks like an empty log and a growing feeling that
+something is wrong. `swarmctl cron status` reads the installed block, every
+per-job artifact and the last line of each, and says which jobs are installed,
+stale, failing or never ran.
+
+```bash
+swarmctl cron status              # what is scheduled, what ran, what broke
+swarmctl cron tune                # the cadence this climate calls for
+swarmctl cron tune --apply        # ..and install it
+swarmctl cron tune --market "..." # also take a market reading (network)
+```
+
+The cadence is not cron-of-the-week. It moves when the facts move, and uses
+three devices so it converges instead of hunting:
+
+- **A ladder, not a continuum.** Intervals come from a small ordered set
+  (`1, 2, 5, 10, 15, 30` min for the hot jobs, `15, 30, 60, 120, 240` for the
+  probes), and pressure is bucketed onto it. A small change in the climate lands
+  on the same rung, so nothing moves for nothing.
+- **A deadband.** A candidate has to be 1.6× faster or slower than what is
+  installed before it is worth touching.
+- **Dwell.** After a change, nothing else moves for six hours — unless the
+  situation is critical: a paid customer is owed work, or a ledger invariant is
+  failing. Those bypass the wait, because they are the reason the schedule
+  exists.
+
+Climate is measured from what the box already knows, not from vibes: jobs in the
+last hour, the owed backlog, integrity failures, degraded connections, `intel`
+envelopes on the bus, and optionally the keyless market probe. A quiet box rests
+at bridge/ingest every 30 min, probes every 4 h, readiness every 2 h, and stays
+there. State lives in `logs/schedule-state.json` (untracked).
+
+`tools/bootstrap.sh` installs that resting cadence plus an hourly
+`swarmctl cron tune --apply`, so the schedule corrects itself without anyone
+watching it. When a job stops producing output, `swarmctl cron status` is the
+first thing to run.
+
 ## Stack
 
 - **FastAPI** — async gateway

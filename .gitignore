@@ -36,3 +36,6 @@ nostr_dvm/logs/*.demo.jsonl
 artifacts/
 logs/bridge-state.json
 logs/console-telemetry.json
+logs/schedule-state.json
+logs/cron-*.log
+logs/readiness.json

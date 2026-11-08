@@ -16,11 +16,22 @@
 # the block is written to ~/.config/passive_income_swarm/crontab.txt and the
 # exact command to install it is printed.
 #
-# What it schedules, and why each interval:
-#   bridge    every 5 min   publishes changed console facts to the bus
-#   ingest    every 10 min  drains the bus into the ledger and skill store
-#   probe     hourly        live connection probes (network calls, so not often)
-#   readiness hourly        a readiness snapshot for anything that reads files
+# What it schedules:
+#   bridge    rest 30 min   publishes changed console facts to the bus
+#   ingest    rest 30 min   drains the bus into the ledger and skill store
+#   probe     rest 4 h      live connection probes (network calls, so not often)
+#   readiness rest 2 h      a readiness snapshot for anything that reads files
+#   tune      hourly        reads the climate and speeds the four above up
+#
+# Those are the scheduler's resting rungs, not arbitrary defaults: a cold box
+# stays there, and the first hourly tune finds nothing worth changing. Traffic,
+# an owed backlog, integrity failures, degraded connections or scout intel move
+# a job one rung at a time, never for free.
+#
+# The block itself is rendered by swarm.scheduler, the same module `swarmctl
+# cron status` reads, so every line carries a `# job:<id>` tag and health checks
+# line up with what is actually installed. Left alone, the cadence does not
+# drift: a change has to beat a 1.6x deadband and a 6 h dwell first.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -111,16 +122,14 @@ fi
 # 3. cron
 # ---------------------------------------------------------------------------
 build_block() {
-  cat <<EOF
-$MARK_BEGIN (managed by tools/bootstrap.sh — edit there, not here)
-SHELL=/bin/bash
-PATH=/usr/local/bin:/usr/bin:/bin
-*/5 * * * * cd $REPO && ${LOCK:+$LOCK /tmp/pis-bridge.lock }$PYTHON -m swarm.cli bridge >> $REPO/logs/cron-bridge.log 2>&1
-*/10 * * * * cd $REPO && ${LOCK:+$LOCK /tmp/pis-ingest.lock }$PYTHON -m swarm.cli ingest >> $REPO/logs/cron-ingest.log 2>&1
-17 * * * * cd $REPO && ${LOCK:+$LOCK /tmp/pis-conn.lock }$PYTHON -m swarm.cli connections --probe --save >> $REPO/logs/cron-connections.log 2>&1
-23 * * * * cd $REPO && $PYTHON -m swarm.cli readiness --fast --json > $REPO/logs/readiness.json 2>> $REPO/logs/cron-readiness.log
-$MARK_END
-EOF
+  # Rendered by the scheduler module so the tags match what `cron status` parses.
+  ( cd "$REPO" && "$PYTHON" -c '
+import sys
+from swarm.scheduler import render_block
+repo, python, lock = sys.argv[1:4]
+intervals = {"bridge": 30, "ingest": 30, "probe": 240, "readiness": 120, "tune": 60}
+sys.stdout.write(render_block(repo, python, intervals, flock=lock or None))
+' "$REPO" "$PYTHON" "${LOCK:+flock}" )
 }
 
 strip_block() {
@@ -162,8 +171,10 @@ if ! command -v crontab >/dev/null; then
     mkdir -p "$target_dir"
     { strip_block < "$target" 2>/dev/null || true; printf '%s\n' "$BLOCK"; } > "$target.new"
     mv "$target.new" "$target"
+    say "             block written to $target"
+  else
+    say "             would write the block to $target (--dry-run)"
   fi
-  say "             block written to $target"
   say "             install it with: crontab $target"
   exit 0
 fi
