@@ -296,6 +296,33 @@ bash ~/passive_income_swarm/tools/bootstrap.sh
 
 Then `swarmctl cron status` answers "is anything broken?"
 
+## The portal
+
+Sourcing `tools/portal.sh` puts a door on the checkout: land in the repo root
+and the shell prints the branch and commit, cron health, whether the box is safe
+to charge, the README's roadmap, and the next useful command. No daemon and no
+network — it reads git, the crontab, `logs/readiness.json` and `README.md`.
+
+```bash
+bash tools/portal.sh --install     # add the hook to ~/.zshrc or ~/.bashrc
+# or, for one shell only:
+. ~/passive_income_swarm/tools/portal.sh
+
+portal        # render it again from anywhere
+portal -a     # status + roadmap + files + next actions
+portal -q     # banner only
+```
+
+It rides `PROMPT_COMMAND` (bash) or `chpwd_functions` (zsh) rather than
+redefining `cd`, and fires once per entry into the root, so it does not turn
+every prompt into a report. Settings are a single letter string:
+
+| setting | meaning |
+|---|---|
+| `SWARM_PORTAL_FLAGS="srn"` | default sections — `s` status, `r` roadmap, `n` next; add `l` for files |
+| `SWARM_PORTAL=0` | disable the hook for this shell |
+| `SWARM_PORTAL_ROOT` | point at a different checkout |
+
 ## Stack
 
 - **FastAPI** — async gateway

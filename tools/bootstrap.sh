@@ -204,4 +204,5 @@ next:
   crontab -l                         # confirm the block
   tail -f $REPO/logs/cron-bridge.log # watch the first run
   $REPO/swarmctl readiness --fast     # is this box safe to charge?
+  bash $REPO/tools/portal.sh --install # make the checkout greet you
 EOF

@@ -123,5 +123,6 @@ elif [ "$DRY" = "1" ]; then
 else
   say "installed  : $REPO"
   say "health     : cd $REPO && ./swarmctl cron status"
+  say "portal     : bash $REPO/tools/portal.sh --install   (make the checkout greet you)"
 fi
 exit "$status"
