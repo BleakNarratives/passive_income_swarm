@@ -169,7 +169,9 @@ if ! command -v crontab >/dev/null; then
   say "cron       : crontab not found on this machine"
   if [ "$DRY_RUN" = "0" ]; then
     mkdir -p "$target_dir"
-    { strip_block < "$target" 2>/dev/null || true; printf '%s\n' "$BLOCK"; } > "$target.new"
+    # Only read the previous block if it exists: a failed redirect prints a
+    # shell error that 2>/dev/null cannot suppress, and the first run has none.
+    { if [ -f "$target" ]; then strip_block < "$target"; fi; printf '%s\n' "$BLOCK"; } > "$target.new"
     mv "$target.new" "$target"
     say "             block written to $target"
   else

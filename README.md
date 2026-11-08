@@ -274,6 +274,34 @@ there. State lives in `logs/schedule-state.json` (untracked).
 watching it. When a job stops producing output, `swarmctl cron status` is the
 first thing to run.
 
+First run on a machine. Safe to paste into an interactive shell: the whole block
+is a subshell, so a failed step reports and stops there instead of taking your
+terminal with it (`set -e` at the top level is how you get "[Process completed]").
+
+```bash
+(
+  repo="${REPO:-$HOME/passive_income_swarm}"
+  if ! command -v git >/dev/null 2>&1; then
+    echo "git is not installed — install it, then re-run." >&2
+  elif [ -e "$repo/.git" ]; then
+    git -C "$repo" fetch --prune origin || echo "  fetch failed — using what is on disk" >&2
+    git -C "$repo" checkout main || echo "  could not switch to main — staying put" >&2
+    git -C "$repo" merge --ff-only origin/main || echo "  not a fast-forward — left it alone" >&2
+  else
+    git clone https://github.com/BleakNarratives/passive_income_swarm.git "$repo" \
+      || echo "  clone failed — check the remote or your credentials" >&2
+  fi
+  if [ -f "$repo/tools/bootstrap.sh" ]; then
+    bash "$repo/tools/bootstrap.sh" --no-pull
+  else
+    echo "no checkout at $repo — nothing to install." >&2
+  fi
+)
+```
+
+Then `bash ~/passive_income_swarm/tools/bootstrap.sh` is the one command to
+re-run it later, and `swarmctl cron status` answers "is anything broken?"
+
 ## Stack
 
 - **FastAPI** — async gateway
