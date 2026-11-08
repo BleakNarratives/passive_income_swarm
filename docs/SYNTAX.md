@@ -6,6 +6,11 @@ round of work starts from the same boundary instead of rediscovering it.
 Source: handoff note, 2026-11-08. Revisit before any feature in this area grows
 legs.
 
+**Step 1 has started, narrowly:** `swarm/capabilities.py` records capabilities
+with dated, machine-scoped evidence (see [CAPABILITIES.md](CAPABILITIES.md)).
+That is the evidence layer only. No delegation, NAT, identity or replacement
+model work has begun, and this note is not authorisation for it.
+
 ---
 
 ## 1. The reversal
@@ -64,7 +69,9 @@ not a runtime registry — that gap is step 1 below.
 
 - **Discover** through a capability registry with evidence states: available,
   tested, verified, delegated, blocked. "Available" means *proven on this
-  machine at this commit*, with the command and output hash stored.
+  machine at this commit*, with the command and output hash stored. Started:
+  `swarm/capabilities.py`, `docs/CAPABILITIES.md`; the registry records evidence
+  but does not yet perform discovery or delegation.
 - **Delegate** with a task envelope: objective, inputs, acceptance test,
   budget, deadline. A subagent returns evidence, not prose.
 - **Disagree** with a challenge envelope that cites the evidence it disputes.
@@ -134,6 +141,8 @@ a diagram tidy. No forced monorepo.
 
 0. **Freeze this boundary.** No merging, no renames.
 1. **Capability registry with evidence** — everything else quotes it.
+   *Started:* `swarm/capabilities.py` + `swarmctl capabilities` record states and
+   evidence. Discovery, delegation and verification envelopes are still ahead.
 2. **Artifact/provenance record + NAT core** (capture/diff/restore) and the
    `last-good` pointer.
 3. **Path leases and the plan-before-act gate** in the coordinator.

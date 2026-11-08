@@ -32,6 +32,8 @@ from .scouts import ScoutEngine
 from .skills import MasteryGate, Skill, SkillStore
 from .supervisor import Supervisor
 from .breaker import IngestBreaker
+from .capabilities import STATES as CAPABILITY_STATES
+from .capabilities import CapabilityRegistry, format_report as capabilities_text
 from .connections import build_connections, format_report
 from .contracts import Envelope, PayloadError, parse as parse_envelope
 from .discovery import ScoutRegistry
@@ -736,6 +738,79 @@ def cmd_cron(ctx: Context, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_capabilities(ctx: Context, args: argparse.Namespace) -> int:
+    """What is proven here, on this machine, at this commit."""
+    action = args.action or "show"
+    registry = CapabilityRegistry.load(ctx.root)
+
+    if action == "sync":
+        result = registry.sync()
+        print(
+            json.dumps(result, indent=2, sort_keys=True)
+            if args.json
+            else capabilities_text(registry)
+        )
+        return 0
+
+    if action == "import":
+        # The path may be the second positional or --path; both read naturally.
+        source_path = args.path or args.capability
+        if not source_path:
+            print("capabilities import needs a file path", file=sys.stderr)
+            return 2
+        try:
+            data = json.loads(Path(source_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"could not read {source_path}: {exc}", file=sys.stderr)
+            return 2
+        result = registry.import_entries(data, source=args.source or "import")
+        print(
+            json.dumps(result, indent=2, sort_keys=True)
+            if args.json
+            else capabilities_text(registry)
+        )
+        return 0
+
+    if action == "record":
+        if not args.capability:
+            print("capabilities record needs a capability id", file=sys.stderr)
+            return 2
+        if args.command:
+            result = registry.run(args.capability, args.command, detail=args.detail or "")
+            registry.save()
+            print(
+                json.dumps(result, indent=2, sort_keys=True)
+                if args.json
+                else capabilities_text(registry)
+            )
+            return 0 if result["exit_code"] == 0 else 1
+        try:
+            registry.record(args.capability, args.state or "available", detail=args.detail or "")
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        registry.save()
+        print(
+            json.dumps(registry.get(args.capability), indent=2, sort_keys=True)
+            if args.json
+            else capabilities_text(registry)
+        )
+        return 0
+
+    # A first look derives from the audit rather than claiming an empty registry.
+    if not registry.capabilities:
+        registry.sync()
+    payload = {"capabilities": registry.capabilities, "summary": registry.summary()}
+    print(
+        json.dumps(payload, indent=2, sort_keys=True)
+        if args.json
+        else capabilities_text(registry)
+    )
+    if args.strict and registry.summary().get("blocked"):
+        return 1
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # parser
 # ---------------------------------------------------------------------------
@@ -950,6 +1025,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state-path", default=None)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_cron)
+
+    p = sub.add_parser(
+        "capabilities", help="what is proven, where, and when, with evidence"
+    )
+    p.add_argument(
+        "action", nargs="?", choices=["show", "sync", "record", "import"], default="show"
+    )
+    p.add_argument("capability", nargs="?", default=None, help="capability id")
+    p.add_argument("--state", default=None, choices=list(CAPABILITY_STATES))
+    p.add_argument("--detail", default="", help="why this state")
+    p.add_argument("--command", default=None, help="run this command as evidence")
+    p.add_argument("--path", default=None, help="JSON list to import")
+    p.add_argument("--source", default="import", help="label the imported evidence")
+    p.add_argument("--strict", action="store_true", help="exit 1 when anything is blocked")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_capabilities)
 
     return parser
 

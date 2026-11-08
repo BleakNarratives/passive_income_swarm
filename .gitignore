@@ -18,6 +18,7 @@ nostr_dvm/dvm.env
 logs/swarm.jsonl
 logs/swarm.jsonl.*.bak
 logs/connections.json
+logs/capabilities.json
 logs/supervisor_state.json
 skills/registry.json
 data/models/

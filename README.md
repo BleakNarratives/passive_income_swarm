@@ -28,6 +28,15 @@ split and the dependency-ordered sequence are recorded in
 [docs/SYNTAX.md](docs/SYNTAX.md), and that document is the thing to read before
 any feature in this area starts.
 
+## Capabilities with evidence
+
+`./swarmctl capabilities` records what is actually proven here, on this machine,
+at this commit: `available`, `tested`, `verified`, `delegated`, `blocked` or
+`unknown`, with the command, exit code and output hash behind each state. It
+builds on the cabinet and the connection audit instead of replacing them, and
+`capabilities import` merges another machine's list without lowering a state.
+See [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
+
 ## Quick Start
 
 ```bash
