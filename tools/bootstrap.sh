@@ -76,9 +76,12 @@ say "lock       : ${LOCK:-unavailable — cron runs may overlap}"
 if [ "$DO_PULL" = "1" ]; then
   if ! command -v git >/dev/null; then
     say "git        : absent — skipping the pull"
-  elif [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null || true)" ]; then
-    say "git        : local changes present — skipping the pull (commit or stash first)"
   else
+    # chmod noise is not local work; ignoring it keeps a Termux/Android
+    # checkout updatable instead of permanently "dirty".
+    if [ -n "$(git -C "$REPO" -c core.fileMode=false status --porcelain 2>/dev/null || true)" ]; then
+      say "git        : local changes present — fast-forward only"
+    fi
     current="$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
     say "git        : on '$current', fetching origin"
     if [ "$DRY_RUN" = "0" ]; then
@@ -87,7 +90,7 @@ if [ "$DO_PULL" = "1" ]; then
         git -C "$REPO" checkout "$BRANCH"
       fi
       before="$(git -C "$REPO" rev-parse --short HEAD)"
-      git -C "$REPO" merge --ff-only "origin/$BRANCH" || die "not a fast-forward — resolve by hand, nothing was changed"
+      git -C "$REPO" -c core.fileMode=false merge --ff-only "origin/$BRANCH" || die "not a fast-forward — local changes would be overwritten or history diverged; nothing was changed"
       after="$(git -C "$REPO" rev-parse --short HEAD)"
       if [ "$before" = "$after" ]; then
         say "git        : already up to date ($after)"

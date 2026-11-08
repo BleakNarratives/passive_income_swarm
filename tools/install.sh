@@ -82,25 +82,35 @@ if [ -e "$REPO" ] && [ ! -d "$REPO" ]; then
 fi
 
 if [ -e "$REPO/.git" ]; then
-  if [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then
-    say "git        : local changes present — not touching the checkout"
+  # Ignore executable-bit noise. Bootstrap chmods scripts, and on some
+  # filesystems that alone makes the checkout look dirty and strands it on an
+  # old commit forever. Real content changes are still detected below.
+  dirty="$(git -C "$REPO" -c core.fileMode=false status --porcelain 2>/dev/null || true)"
+  if [ -n "$dirty" ]; then
+    say "git        : local changes present — fast-forward only, never overwrite"
+  fi
+  current="$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+  say "git        : on '$current'"
+  if ! git -C "$REPO" fetch --prune origin; then
+    warn "fetch failed — could not check for updates; using what is on disk."
   else
-    current="$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
-    say "git        : on '$current'"
-    if git -C "$REPO" fetch --prune origin; then
-      if [ "$current" != "$BRANCH" ]; then
-        git -C "$REPO" checkout "$BRANCH" \
-          || warn "  could not switch to $BRANCH — continuing on $current"
+    if [ "$current" != "$BRANCH" ]; then
+      if ! git -C "$REPO" checkout "$BRANCH"; then
+        warn "could not switch to $BRANCH — resolve by hand; nothing was changed."
+        exit 1
       fi
-      now="$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
-      if [ "$now" = "$BRANCH" ]; then
-        git -C "$REPO" merge --ff-only "origin/$BRANCH" \
-          || warn "  not a fast-forward — left the checkout as it was"
-      else
-        warn "  not on $BRANCH — skipping the merge"
+    fi
+    now="$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+    if [ "$now" = "$BRANCH" ]; then
+      if ! git -C "$REPO" -c core.fileMode=false merge --ff-only "origin/$BRANCH"; then
+        warn "could not fast-forward — local changes would be overwritten."
+        warn "nothing was changed. Inspect: git -C $REPO status --short"
+        warn "stash or commit those files, or re-run with --repo PATH to install elsewhere."
+        exit 1
       fi
     else
-      warn "  fetch failed — using what is already on disk"
+      warn "not on $BRANCH — skipping the merge; resolve by hand."
+      exit 1
     fi
   fi
 elif [ -d "$REPO" ] && [ -n "$(ls -A "$REPO" 2>/dev/null)" ]; then

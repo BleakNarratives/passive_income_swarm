@@ -317,6 +317,11 @@ If `~/passive_income_swarm` already exists but is not a git checkout, the
 installer stops before touching it and says so. Move that folder aside (do not
 delete it until you have looked inside), then re-run.
 
+An existing checkout with local edits is fast-forwarded only when Git can do so
+without overwriting them. Executable-bit changes are ignored because bootstrap
+chmods scripts itself; if a real edit conflicts with the update, the installer
+stops, lists the situation, and changes nothing.
+
 Offline, or if you would rather see every step, the two commands it replaces:
 
 ```bash
