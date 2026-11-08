@@ -1,0 +1,37 @@
+# systemd user unit for the Nostr DVM worker.
+#
+# Install:
+#   cp deploy/dvm-worker.service ~/.config/systemd/user/dvm-worker.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now dvm-worker.service
+#   swarmctl unit audit --path ~/.config/systemd/user/dvm-worker.service
+#
+# The point of this file is ExecStart: it runs run_paid_worker.sh, which sets
+# DVM_PAID_ONLY=1 and executes paid_mode_guard.py. Starting dvm_worker.py or
+# paid_mode_guard.py directly from a unit means paid mode is whatever the
+# environment happens to say at start time, and `swarmctl unit audit` reports
+# that as UNGUARDED.
+#
+# Adjust the paths below if the checkout is not at ~/passive_income_swarm.
+
+[Unit]
+Description=Nostr DVM worker (fail-closed paid mode)
+Documentation=file://%h/passive_income_swarm/nostr_dvm/PAID_MODE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/passive_income_swarm/nostr_dvm
+EnvironmentFile=-%h/passive_income_swarm/nostr_dvm/dvm.env
+ExecStart=%h/passive_income_swarm/nostr_dvm/run_paid_worker.sh
+Restart=always
+RestartSec=10
+# The worker writes the settlement ledger under logs/; keep it out of /tmp so a
+# reboot cannot lose the record of who paid.
+ReadWritePaths=%h/passive_income_swarm/nostr_dvm/logs
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

@@ -43,6 +43,12 @@ from .readiness import (
     readiness as run_readiness,
     to_json as readiness_json,
 )
+from .lifecycle import (
+    evaluate as lifecycle_evaluate,
+    format_report as lifecycle_text,
+    self_test as lifecycle_self_test,
+)
+from .unit_audit import audit as audit_unit, format_report as unit_text
 from .incentives import ScoutIncentives
 from .ingest import Ingestor
 from .lineage import (
@@ -633,6 +639,49 @@ def cmd_relay(ctx: Context, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_tui(ctx: Context, args: argparse.Namespace) -> int:
+    """Terminal console. Delegates to swarm.tui so it stays testable alone."""
+    from . import tui
+
+    argv = ["--root", str(ctx.root), "--interval", str(args.interval)]
+    if args.once:
+        argv.append("--once")
+    if getattr(args, "width", 0):
+        argv += ["--width", str(args.width)]
+    if args.settlements_db:
+        argv += ["--settlements-db", args.settlements_db]
+    if args.jobs_log:
+        argv += ["--jobs-log", args.jobs_log]
+    return tui.main(argv)
+
+
+def cmd_unit(ctx: Context, args: argparse.Namespace) -> int:
+    """Read the unit file that actually runs on the box. Never starts anything."""
+    result = audit_unit(args.path, live=args.live)
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(unit_text(result))
+    return 0 if result.get("verdict") == "guarded" else 1
+
+
+def cmd_lifecycle(ctx: Context, args: argparse.Namespace) -> int:
+    """Prove the state machine, and say plainly whether a real payment settled."""
+    if args.action == "self-test":
+        result = lifecycle_self_test()
+        if args.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            for step in result.get("steps", []):
+                print(f"{'✓' if step['ok'] else '✗'} {step['step']}: {step['detail']}")
+            print(f"\n{result.get('proves', '')}")
+            print(f"does not prove: {result.get('does_not_prove', '')}")
+        return 0 if result.get("ok") else 1
+    report = lifecycle_evaluate(ctx.root)
+    print(json.dumps(report, indent=2, sort_keys=True) if args.json else lifecycle_text(report))
+    return 0 if report.get("rail_verified") else 1
+
+
 # ---------------------------------------------------------------------------
 # parser
 # ---------------------------------------------------------------------------
@@ -797,6 +846,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fast", action="store_true", help="skip the network checks")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_readiness)
+
+    p = sub.add_parser("tui", help="terminal console — no browser, no port, no dependency")
+    p.add_argument("--once", action="store_true", help="print one frame and exit")
+    p.add_argument("--interval", type=float, default=3.0, help="auto-refresh seconds")
+    p.add_argument("--width", type=int, default=0, help="force width (useful with --once)")
+    p.add_argument("--settlements-db", default=None)
+    p.add_argument("--jobs-log", default=None)
+    p.set_defaults(func=cmd_tui)
+
+    p = sub.add_parser("unit", help="does the systemd unit use the paid-mode launcher?")
+    p.add_argument("action", nargs="?", choices=["audit"], default="audit")
+    p.add_argument(
+        "--path", default="~/.config/systemd/user/dvm-worker.service"
+    )
+    p.add_argument("--live", action="store_true", help="also ask systemctl what is loaded")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_unit)
+
+    p = sub.add_parser(
+        "lifecycle", help="prove invoice → paid → served, and whether sats really moved"
+    )
+    p.add_argument("action", nargs="?", choices=["status", "self-test"], default="status")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_lifecycle)
 
     return parser
 

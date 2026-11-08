@@ -142,6 +142,53 @@ invariants as SQL against the live ledger.
 Read-only by default; mutating actions require `DASHBOARD_TOKEN`. See
 **[docs/DASHBOARD.md](docs/DASHBOARD.md)**.
 
+## Is it safe to charge?
+
+`swarmctl readiness` answers that in six ordered stages, because *the switch is
+on* and *this machine can safely take money* are different claims:
+
+| stage | what it needs | owner |
+|---|---|---|
+| `configured` | a config source on disk, not just shell exports | human |
+| `dependencies` | `coincurve`, `websockets` importable | machine |
+| `signing_identity` | a key that can sign an event | human |
+| `wallet_rotated` | a credential that is **not** the leaked one, mode `600` | human |
+| `lifecycle_verified` | the state machine proven, and ideally a real settlement | machine |
+| `authorized` | `DVM_PRODUCTION_AUTHORIZED=1`, and stage 5 already passed | human |
+
+`payments_safe` is true only when all six are `ok`. There is also a legacy
+`ready` flag meaning "no blocking precondition" — it is deliberately weaker, and
+setting `DVM_PAID_ONLY=1` can never make a box safe on its own.
+
+```bash
+swarmctl readiness                       # stages, then the granular checks
+swarmctl lifecycle self-test             # invoice → paid → served, in-process
+swarmctl lifecycle status                # + whether a real payment was ever observed
+swarmctl unit audit --live               # does systemd actually run the guard?
+```
+
+The lifecycle is split on purpose: the self-test proves the state machine
+without a wallet, and `logs/lifecycle-proof.json` (a real payment hash and
+preimage) is the only thing that proves the rail. The report prints both and
+never conflates them.
+
+`swarmctl unit audit` exists because a guard nobody starts is decoration. It
+parses `ExecStart` rather than grepping — `grep run_paid_worker` also matches a
+comment, an `Environment=` value, or a log path. `deploy/dvm-worker.service` is
+the unit that passes it.
+
+## Terminal console
+
+```bash
+swarmctl tui            # curses; no browser, no port, no dependency
+swarmctl tui --once     # one frame, for CI or `watch`
+```
+
+Same snapshot as the web console, so the two cannot disagree about the money:
+stage evidence, sats settled, what is owed to a customer, connections, and the
+job stream. Keys: `r` refresh, `s` lifecycle self-test, `p` probe connections,
+`q` quit.
+
 ## Stack
 
 - **FastAPI** — async gateway

@@ -31,3 +31,6 @@ SCOUT_REGISTRY.json
 # seeded demo console data (synthetic, never real)
 nostr_dvm/logs/*.demo.db
 nostr_dvm/logs/*.demo.jsonl
+
+# local screenshots and scratch output
+artifacts/
