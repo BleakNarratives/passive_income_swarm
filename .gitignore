@@ -34,3 +34,5 @@ nostr_dvm/logs/*.demo.jsonl
 
 # local screenshots and scratch output
 artifacts/
+logs/bridge-state.json
+logs/console-telemetry.json

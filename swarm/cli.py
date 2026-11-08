@@ -49,6 +49,7 @@ from .lifecycle import (
     self_test as lifecycle_self_test,
 )
 from .unit_audit import audit as audit_unit, format_report as unit_text
+from .bridge import publish as bridge_publish, format_report as bridge_text
 from .incentives import ScoutIncentives
 from .ingest import Ingestor
 from .lineage import (
@@ -682,6 +683,38 @@ def cmd_lifecycle(ctx: Context, args: argparse.Namespace) -> int:
     return 0 if report.get("rail_verified") else 1
 
 
+def cmd_bridge(ctx: Context, args: argparse.Namespace) -> int:
+    """Publish the console's facts to the bus so the rest of the swarm sees them."""
+    import time as _time
+
+    def once() -> int:
+        result = bridge_publish(
+            ctx.root,
+            bus_path=args.bus_path,
+            settlement_db=args.settlements_db,
+            jobs_log=args.jobs_log,
+            state_path=args.state_path,
+            dry_run=args.dry_run,
+            force=args.force,
+            export_to=args.export,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(bridge_text(result))
+        return 0 if not result.get("errors") else 1
+
+    if not args.watch:
+        return once()
+    try:
+        while True:
+            once()
+            _time.sleep(max(1.0, float(args.interval)))
+    except KeyboardInterrupt:
+        print("\nbridge stopped")
+        return 0
+
+
 # ---------------------------------------------------------------------------
 # parser
 # ---------------------------------------------------------------------------
@@ -870,6 +903,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", nargs="?", choices=["status", "self-test"], default="status")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_lifecycle)
+
+    p = sub.add_parser(
+        "bridge", help="publish console facts to the WhorlBus (deduped, contract-clean)"
+    )
+    p.add_argument("--once", action="store_true", help="publish changed signals and exit (default)")
+    p.add_argument("--watch", action="store_true", help="keep publishing on an interval")
+    p.add_argument("--interval", type=float, default=15.0)
+    p.add_argument("--dry-run", action="store_true", help="show what would publish")
+    p.add_argument("--force", action="store_true", help="republish even unchanged signals")
+    p.add_argument("--bus-path", default=None, help="override bus.jsonl (e.g. core_framework)")
+    p.add_argument("--state-path", default=None, help="where the dedupe digests live")
+    p.add_argument("--settlements-db", default=None)
+    p.add_argument("--jobs-log", default=None)
+    p.add_argument("--export", default=None, help="write console telemetry JSON to this path")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_bridge)
 
     return parser
 

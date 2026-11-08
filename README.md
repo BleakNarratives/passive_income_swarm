@@ -189,6 +189,51 @@ stage evidence, sats settled, what is owed to a customer, connections, and the
 job stream. Keys: `r` refresh, `s` lifecycle self-test, `p` probe connections,
 `q` quit.
 
+## Wiring the console into the swarm
+
+The console's facts used to be visible only to a human looking at a screen.
+`swarmctl bridge` projects them onto the WhorlBus as contract-clean envelopes, so
+scouts, engines and the ingestor see the same numbers without scraping the
+dashboard.
+
+```bash
+swarmctl bridge --dry-run     # what would publish, and why
+swarmctl bridge               # publish only what changed
+swarmctl bridge --watch       # keep publishing on an interval
+```
+
+Signals published today:
+
+| signal | kind | confidence |
+|---|---|---|
+| `money.settled` | telemetry | 1.0 |
+| `money.owed` | intel | 1.0 when a customer paid and got nothing |
+| `ledger.integrity` | telemetry | 1.0, with the failing check ids |
+| `worker.mode` | telemetry | 1.0, with its config source |
+| `readiness.gate` | telemetry | 1.0, with the blocked stages |
+| `connections.coverage` | telemetry | 0.8 |
+| `forecast.projection` | telemetry | 0.55 — it is a guess with a measured error |
+| `jobs.histogram` | telemetry | 0.9 |
+| `pheromone.money_owed` | pheromone | scales with the backlog |
+
+Three things make it safe to run on a timer:
+
+- **Idempotent.** The digest is computed over facts only, so a console refreshing
+every few seconds does not flood the bus. Re-running with nothing changed
+publishes nothing; `--force` republishes deliberately.
+- **Contract-clean.** Every signal goes through `Envelope.build`, so it carries a
+valid P2 digest and cannot be the ad-hoc JSON Relay 1 rejects.
+- **Secret-free.** No signal contains a credential, a preimage or a key — there is
+ a test that writes one and greps the bus and the export for it.
+
+Anything that cannot consume a bus gets the same facts as a file:
+`logs/console-telemetry.json` (`console.telemetry/1`), written on every publish.
+
+```bash
+swarmctl bridge                       # publish + export
+swarmctl --bus-path bus.jsonl ingest  # the rest of the swarm consumes it
+```
+
 ## Stack
 
 - **FastAPI** — async gateway
