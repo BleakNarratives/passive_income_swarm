@@ -1,6 +1,9 @@
 keys/nostr.key
 keys/nwc.secret
 
+# Local credentials (GITHUB_TOKEN, GROQ_API_KEY, ...). Never tracked.
+.env
+
 # Python bytecode
 __pycache__/
 *.pyc

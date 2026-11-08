@@ -34,6 +34,19 @@ in a pre-deploy gate. `--allow-degraded` downgrades that to `0`.
 public API works at 60 requests/hour, which is enough for occasional scout runs
 and not enough for a fleet. The report says so instead of pretending otherwise.
 
+To clear it, create a token with no repository or account permissions (a
+fine-grained token with "Public repositories (read-only)" is enough for
+`/rate_limit`), then put one line in `.env` at the checkout root:
+
+```sh
+GITHUB_TOKEN=...
+```
+
+`chmod 600 .env`; the file is gitignored and loaded by both `swarmctl` and the
+cron jobs, so the scheduled probe sees it. `GH_TOKEN` is also accepted. Never
+paste the token into chat, a commit, or a command line that lands in history.
+Re-probe with `swarmctl connections --probe --save`; `github` should read `live`.
+
 `webz_news` is the optional upgrade for demand-signal scouts. It stays
 `unconfigured` until a token exists, and `WEBZ_API_BASE` lets you point at a
 different endpoint without touching code. Its endpoint shape should be confirmed

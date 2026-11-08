@@ -385,7 +385,10 @@ every prompt into a report. Settings are a single letter string:
 
 ## API Key Management
 
-Store keys in `.env` (DO NOT COMMIT).
+Store local credentials in `.env` at the checkout root. It is gitignored, loaded
+by `swarmctl` and by the cron jobs, and never printed. `chmod 600 .env`. The
+GitHub token option is documented in `MRD.txt` (P3-4) and
+[docs/CONNECTIONS.md](docs/CONNECTIONS.md).
 
 ---
 

@@ -37,6 +37,7 @@ from .capabilities import CapabilityRegistry, format_report as capabilities_text
 from .connections import build_connections, format_report
 from .contracts import Envelope, PayloadError, parse as parse_envelope
 from .discovery import ScoutRegistry
+from .env import load_env
 from .graft import GraftGuard
 from .hooks import probe as probe_hooks, summary as hook_summary, to_json as hooks_json
 from .market_search import SOURCES as MARKET_SOURCES, search as market_search_report
@@ -1138,6 +1139,9 @@ def cmd_readiness(ctx: Context, args: argparse.Namespace) -> int:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    # The scheduler runs `python -m swarm.cli` directly, so credentials must be
+    # loaded here rather than only in the swarmctl shell wrapper.
+    load_env(getattr(args, "root", ".") or ".")
     try:
         ctx = build_context(args)
     except RegistryError as exc:

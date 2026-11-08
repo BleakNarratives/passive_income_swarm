@@ -1,6 +1,6 @@
 # HANDOFF.md — swarm control plane + paid rail
 
-**Status: 453/453 tests pass (`bash ./run_tests.sh`).**
+**Status: 460/460 tests pass (`bash ./run_tests.sh`).**
 
 This file replaces an earlier handoff that claimed "complete and verified" while
 the money path was unsound. Two things were true at once: the control plane was

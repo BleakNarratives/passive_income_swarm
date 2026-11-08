@@ -12,7 +12,7 @@ The meatsuit rundown: everything that cannot be done without you
   blocked me that is yours and not mine — your account, your secret, your
   money, your machine, or your judgment. I say what blocked me, every time.
 
-  There are 10 items. Two are urgent. Four gate the first paid job.
+  There are 11 items. Two are urgent. Four gate the first paid job. One is optional.
 
 
 --------------------------------------------------------------------------------
@@ -252,6 +252,46 @@ P3 — HYGIENE. NONE OF THIS BLOCKS A SINGLE SAT.
   Relevance: sats received for a service are income in most jurisdictions. Not a
   blocker for a first job; is a blocker before volume. Worth 20 minutes with
   someone qualified rather than an hour with me speculating.
+
+
+[P3-4] GIVE GITHUB A TOKEN  (optional — removes the rate-limit degradation)
+--------------------------------------------------------------------------------
+  Why it must be you:
+    The `github` connection is unauthenticated, so it runs at 60 requests/hour
+    and reads `degraded`. A token is account-scoped; I cannot create one, and
+    you should not paste it into chat, a commit, or a shell command that lands
+    in history.
+
+  What it changes:
+    Authenticated requests run at 5,000/hour. `repo.gh` and `market.search` stop
+    reporting degraded. It does not grant private-repository access unless you
+    deliberately give the token that scope.
+
+  Create it:
+    1. GitHub -> Settings -> Developer settings -> Personal access tokens ->
+       Fine-grained tokens -> Generate new token.
+    2. Name it for the machine, set a 90-day expiration.
+    3. Repository access: "Public repositories (read-only)" is enough for the
+       rate-limit probe; no account permissions are required.
+    4. Generate and copy it once.
+
+  Store it locally:
+    cd ~/passive_income_swarm
+    read -rsp "GitHub token: " GITHUB_TOKEN; echo
+    printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN" >> .env
+    unset GITHUB_TOKEN
+    chmod 600 .env
+
+  `.env` is gitignored, loaded by `swarmctl` and by the cron jobs, and never
+  printed. If the line already exists, edit `.env` and replace it instead of
+  appending a second one.
+
+  Verify:
+    bash ./swarmctl connections --probe --save
+    bash ./swarmctl capabilities sync
+    # `github` should read live, not degraded.
+
+  Time: 2 minutes.
 
 
 ================================================================================
