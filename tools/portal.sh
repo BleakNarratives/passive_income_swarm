@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # tools/portal.sh — the door. Source it and `cd` into this checkout knows what
-# to show: branch, swarm health, cron health, readiness, roadmap, next actions.
+# to show: branch, swarm health, cron health, readiness, agents, roadmap.
+#
+# Deliberately plain: no frames, no rules, no animation, every line clipped to
+# the terminal width. It has to behave in a 40-column tmux pane as well as a
+# full window, and a pane that repaints or wraps is a pane you stop using.
 #
 #   . tools/portal.sh                  # this shell only
 #   bash tools/portal.sh --install     # add it to your shell rc (idempotent)
@@ -8,19 +12,23 @@
 #
 # Then, from anywhere:
 #   portal             # banner + health + cron + next + roadmap
-#   portal -a          # also list the files
+#   portal --agents    # the cabinet roster, one agent per line
+#   portal -a          # every section, including files and agents
 #   portal --health -v # the swarm stats behind the dot
 #   portal -q          # just the banner and its health dot
+#   portal --ascii     # ASCII glyphs only, for terminals that mangle the dot
 #
 # Flags live in one string, set once and forgotten:
-#   SWARM_PORTAL_FLAGS="srnh"   s=cron r=roadmap n=next h=swarm health l=files
+#   SWARM_PORTAL_FLAGS="srnh"   s=cron r=roadmap n=next h=health e=agents l=files
 #   SWARM_PORTAL=0              disable the cd hook for this shell
 #   SWARM_PORTAL_ROOT=...       point at another checkout
+#   SWARM_PORTAL_WIDTH=...      clip to this width instead of $COLUMNS
+#   SWARM_PORTAL_ASCII=1        never emit a non-ASCII glyph
 #
 # No daemon and no network: it reads git, the crontab, logs/console-telemetry.json,
-# logs/readiness.json and README.md, and nothing else. Sourcing this file changes
-# no shell options and wraps nothing — the hook rides PROMPT_COMMAND (bash) or
-# chpwd_functions (zsh), so it fires once per entry, never per prompt.
+# logs/readiness.json, cabinet.json and README.md, and nothing else. Sourcing this
+# file changes no shell options and wraps nothing — the hook rides PROMPT_COMMAND
+# (bash) or chpwd_functions (zsh), so it fires once per entry, never per prompt.
 
 SWARM_PORTAL_MARK_BEGIN="# >>> passive_income_swarm portal >>>"
 SWARM_PORTAL_MARK_END="# <<< passive_income_swarm portal <<<"
@@ -41,25 +49,44 @@ SWARM_PORTAL_ROOT="${SWARM_PORTAL_ROOT:-$PWD}"
 
 _portal_help() {
   cat <<'EOF'
-portal — the door to this checkout
+portal - the door to this checkout
 
   portal              banner + health + cron + next actions + roadmap
-  portal -a           also list the files
-  portal --health     the swarm stats line
-  portal --health -v  and the detail behind it
+  portal --agents     the cabinet roster, one agent per line
+  portal -a           every section, including files and agents
+  portal --health -v  the stats behind the health dot
   portal -q           banner and health dot only
-  portal -s|-r|-l|-n  pick one section (cron, roadmap, files, next)
+  portal --ascii      ASCII glyphs only
+  portal -s|-r|-l|-n  one section: cron, roadmap, files, next
 
   bash tools/portal.sh --install     add the cd hook to your shell rc
   bash tools/portal.sh --uninstall   remove it
   bash tools/portal.sh --rc PATH     use a specific rc file
 
-  SWARM_PORTAL_FLAGS="srnh"          default sections (l adds files)
+  SWARM_PORTAL_FLAGS="srnh"          default sections (e agents, l files)
+  SWARM_PORTAL_WIDTH=80              clip to this width instead of $COLUMNS
+  SWARM_PORTAL_ASCII=1               never emit a non-ASCII glyph
   SWARM_PORTAL=0                     disable the hook for this shell
 EOF
 }
 
+# Clip plain text (never coloured) to a width, with an ellipsis.
+_p_clip() {
+  local text="$1" limit="${2:-${_p_width:-100}}"
+  case "$limit" in ''|*[!0-9]*) limit="${_p_width:-100}" ;; esac
+  [ "$limit" -ge 4 ] || limit=4
+  if [ "${#text}" -gt "$limit" ]; then
+    printf '%s%s' "${text:0:$((limit - ${#_p_ell}))}" "$_p_ell"
+  else
+    printf '%s' "$text"
+  fi
+}
+
 _portal_paint() {
+  _p_width="${SWARM_PORTAL_WIDTH:-${COLUMNS:-100}}"
+  case "$_p_width" in ''|*[!0-9]*) _p_width=100 ;; esac
+  [ "$_p_width" -ge 24 ] || _p_width=24
+
   if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     _p_bold="$(printf '\033[1m')"
     _p_dim="$(printf '\033[2m')"
@@ -70,6 +97,19 @@ _portal_paint() {
   else
     _p_bold=""; _p_dim=""; _p_green=""; _p_yellow=""; _p_red=""; _p_off=""
   fi
+
+  # Glyphs last: ASCII is the fallback whenever the locale or the user asks.
+  case "${SWARM_PORTAL_ASCII:-auto}" in
+    1|yes|true) _p_ok="*"; _p_warn="~"; _p_fail="x"; _p_unknown="?"; _p_ell="..." ;;
+    *)
+      case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+        *UTF-8*|*utf8*|*UTF8*)
+          _p_ok="●"; _p_warn="◐"; _p_fail="✕"; _p_unknown="○"; _p_ell="…" ;;
+        *)
+          _p_ok="*"; _p_warn="~"; _p_fail="x"; _p_unknown="?"; _p_ell="..." ;;
+      esac
+      ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -81,6 +121,8 @@ _portal_probe() {
   _p_health="unknown"
   _p_swarm_summary=""
   _p_swarm_detail=""
+  _p_agent_summary=""
+  _p_agent_rows=""
 
   if [ -x "$root/swarmctl" ]; then
     _p_cron="$("$root/swarmctl" cron status 2>/dev/null)"
@@ -100,6 +142,25 @@ def load(*parts):
             return json.load(fh)
     except Exception:
         return {}
+
+# The roster is static, so it is reported even before any telemetry exists.
+cabinet = load("swarm", "cabinet.json") or load("cabinet.json")
+entities = cabinet.get("entities") or []
+if entities:
+    kinds = {}
+    for entity in entities:
+        kind = entity.get("kind") or "?"
+        kinds[kind] = kinds.get(kind, 0) + 1
+    parts = ["%d entities" % len(entities)]
+    parts += ["%d %s" % (count, kind) for kind, count in sorted(kinds.items())]
+    print("AGENTS=" + "  ".join(parts))
+    for entity in entities:
+        print("AGENT=%s|%s|%s|%s" % (
+            entity.get("slot") or "--",
+            entity.get("id") or "?",
+            entity.get("kind") or "?",
+            entity.get("display") or entity.get("role") or "",
+        ))
 
 tele = load("logs", "console-telemetry.json")
 conns_file = load("logs", "connections.json")
@@ -130,7 +191,7 @@ if not tele:
         head.append("%d degraded" % degraded)
     print("HEALTH=unknown")
     if head:
-        print("SUMMARY=" + " · ".join(head) + " · no telemetry yet")
+        print("SUMMARY=" + "  ".join(head) + "  no telemetry yet")
     raise SystemExit(0)
 
 money = tele.get("money") or {}
@@ -179,16 +240,16 @@ except Exception:
     pass
 
 print("HEALTH=" + health)
-print("SUMMARY=" + " · ".join(bits[:5]))
+print("SUMMARY=" + "  ".join(bits[:5]))
 
 top = sorted(jobs.items(), key=lambda kv: -kv[1])[:3]
 if top:
-    print("DETAIL=jobs   " + " · ".join("%s %s" % (v, k) for k, v in top))
+    print("DETAIL=jobs   " + "  ".join("%s %s" % (v, k) for k, v in top))
 
 problems = [item for item in (conns_file.get("connections") or [])
             if item.get("status") != "live"]
 if problems:
-    print("DETAIL=net    " + " · ".join(
+    print("DETAIL=net    " + "  ".join(
         "%s %s" % (item.get("id", "?"), item.get("status", "?"))
         for item in problems[:3]))
 else:
@@ -205,6 +266,9 @@ PY
       SUMMARY=*) _p_swarm_summary="${line#SUMMARY=}" ;;
       DETAIL=*) _p_swarm_detail="${_p_swarm_detail}${_p_swarm_detail:+
 }${line#DETAIL=}" ;;
+      AGENTS=*) _p_agent_summary="${line#AGENTS=}" ;;
+      AGENT=*) _p_agent_rows="${_p_agent_rows}${_p_agent_rows:+
+}${line#AGENT=}" ;;
     esac
   done <<EOF
 $out
@@ -218,10 +282,10 @@ EOF
 
 _portal_dot() {
   case "${_p_health:-unknown}" in
-    ok) printf '%s● ok%s' "$_p_green" "$_p_off" ;;
-    warn) printf '%s◐ degraded%s' "$_p_yellow" "$_p_off" ;;
-    fail) printf '%s✕ failing%s' "$_p_red" "$_p_off" ;;
-    *) printf '%s○ unknown%s' "$_p_dim" "$_p_off" ;;
+    ok) printf '%s%s ok%s' "$_p_green" "$_p_ok" "$_p_off" ;;
+    warn) printf '%s%s degraded%s' "$_p_yellow" "$_p_warn" "$_p_off" ;;
+    fail) printf '%s%s failing%s' "$_p_red" "$_p_fail" "$_p_off" ;;
+    *) printf '%s%s unknown%s' "$_p_dim" "$_p_unknown" "$_p_off" ;;
   esac
 }
 
@@ -234,34 +298,35 @@ _portal_banner() {
   track="$(git -C "$root" status -sb 2>/dev/null | sed -n '1s/^## [^ ]*//p' | sed 's/^ *//;s/ *$//')"
 
   if [ "${dirty:-0}" = "0" ]; then state="clean"; else state="$dirty changed"; fi
-  printf '%s\n' "${_p_bold}passive_income_swarm${_p_off}  ${branch} @ ${sha}  ${_p_dim}${state}${track:+ · $track}${_p_off}  $(_portal_dot)"
+  local line="passive_income_swarm  $branch @ $sha  $state${track:+  $track}"
+  printf '%s\n' "${_p_bold}$(_p_clip "$line" $((_p_width - 12)))${_p_off}  $(_portal_dot)"
 }
 
 _portal_status() {
   local out line bad
   out="$_p_cron"
   if [ -z "$out" ]; then
-    printf '%s\n' "${_p_dim}cron${_p_off}    no status available — is python3 on PATH?"
+    printf '%s\n' "${_p_dim}cron${_p_off}    $(_p_clip 'no status available - is python3 on PATH?' $((_p_width - 8)))"
   elif printf '%s' "$out" | grep -qi 'not installed'; then
-    printf '%s\n' "${_p_dim}cron${_p_off}    not installed — bash tools/bootstrap.sh"
+    printf '%s\n' "${_p_dim}cron${_p_off}    $(_p_clip 'not installed - bash tools/bootstrap.sh' $((_p_width - 8)))"
   else
     line="$(printf '%s\n' "$out" | sed -n '/^daemon:/p' | sed -n '1p')"
     [ -n "$line" ] || line="$(printf '%s\n' "$out" | sed -n '1p')"
-    line="$(printf '%s' "$line" | sed 's/  */ · /g;s/ · $//')"
+    line="$(printf '%s' "$line" | sed 's/  */  /g;s/  $//')"
     bad="$(printf '%s\n' "$out" | grep -cE '(NEVER|STALE|FAIL|NONE) ')"
-    [ "${bad:-0}" -gt 0 ] 2>/dev/null && line="$line · $bad need attention"
-    printf '%s\n' "${_p_dim}cron${_p_off}    $line"
+    [ "${bad:-0}" -gt 0 ] 2>/dev/null && line="$line  $bad need attention"
+    printf '%s\n' "${_p_dim}cron${_p_off}    $(_p_clip "$line" $((_p_width - 8)))"
   fi
 
   if [ -f "$SWARM_PORTAL_ROOT/logs/readiness.json" ] && command -v python3 >/dev/null 2>&1; then
-    python3 - "$SWARM_PORTAL_ROOT/logs/readiness.json" <<'PY' | sed "s/^/${_p_dim}money${_p_off}   /"
+    python3 - "$SWARM_PORTAL_ROOT/logs/readiness.json" <<'PY' | cut -c1-$((_p_width - 8)) | sed "s/^/${_p_dim}money${_p_off}   /"
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
 except Exception:
     raise SystemExit(0)
 safe = "safe to charge" if d.get("payments_safe") else "not safe to charge"
-print("%s · %s/%s stages · %s" % (
+print("%s  %s/%s stages  %s" % (
     safe, d.get("stages_ok", 0), d.get("stages_total", 0), d.get("checked_at", "?")))
 PY
   fi
@@ -269,27 +334,48 @@ PY
 
 _portal_health_line() {
   if [ -z "$_p_swarm_summary" ]; then
-    printf '%s\n' "${_p_dim}swarm${_p_off}   no telemetry yet — run ./swarmctl bridge"
+    printf '%s\n' "${_p_dim}swarm${_p_off}   $(_p_clip 'no telemetry yet - run ./swarmctl bridge' $((_p_width - 8)))"
     return 0
   fi
-  printf '%s\n' "${_p_dim}swarm${_p_off}   $_p_swarm_summary"
+  printf '%s\n' "${_p_dim}swarm${_p_off}   $(_p_clip "$_p_swarm_summary" $((_p_width - 8)))"
   if [ "${_p_verbose:-0}" = "1" ] && [ -n "$_p_swarm_detail" ]; then
-    printf '%s\n' "$_p_swarm_detail" | sed "s/^/${_p_dim}        /;s/\$/${_p_off}/"
+    printf '%s\n' "$_p_swarm_detail" | cut -c1-$((_p_width - 8)) | sed "s/^/${_p_dim}        /;s/\$/${_p_off}/"
   fi
+}
+
+_portal_agents() {
+  local shown=0 slot id kind display line
+  if [ -z "$_p_agent_summary" ]; then
+    printf '%s\n' "${_p_dim}agents${_p_off}  no cabinet.json here"
+    return 0
+  fi
+  printf '%s\n' "${_p_dim}agents${_p_off}  $(_p_clip "$_p_agent_summary" $((_p_width - 8)))"
+  while IFS='|' read -r slot id kind display; do
+    [ -n "$id" ] || continue
+    if [ "$shown" -ge 12 ]; then
+      printf '%s\n' "  ${_p_dim}${_p_ell} more${_p_off}"
+      break
+    fi
+    line="$(printf '  %-3s %-16s %-8s %s' "$slot" "$(_p_clip "$id" 16)" "$kind" "$(_p_clip "$display" $((_p_width > 40 ? _p_width - 34 : 12)))")"
+    printf '%s\n' "$(_p_clip "$line" "$_p_width")"
+    shown=$((shown + 1))
+  done <<EOF
+$_p_agent_rows
+EOF
 }
 
 _portal_roadmap() {
   local root="$1" width
   [ -f "$root/README.md" ] || return 0
-  width="${COLUMNS:-100}"
+  width=$((_p_width - 2))
   printf '%s\n' "${_p_dim}roadmap${_p_off} (README.md)"
-  awk -v limit="$width" '
+  awk -v limit="$width" -v ell="$_p_ell" '
     /^## / {
       sub(/^## /, "")
       if (out != "" && length(out) + length($0) + 5 > limit) {
-        printf "  %s …\n", out; done = 1; exit
+        printf "  %s %s\n", out, ell; done = 1; exit
       }
-      out = out (out == "" ? "" : "  ·  ") $0
+      out = out (out == "" ? "" : "  ") $0
       next
     }
     END { if (!done && out != "") printf "  %s\n", out }
@@ -299,22 +385,22 @@ _portal_roadmap() {
 _portal_files() {
   local root="$1"
   printf '%s\n' "${_p_dim}files${_p_off}"
-  ls -A "$root" 2>/dev/null | awk 'NR<=10{printf "%s%s", sep, $0; sep="  "} END{if (NR>10) printf "  …"; if (NR) print ""}' | sed 's/^/  /'
+  ls -A "$root" 2>/dev/null | awk -v ell="$_p_ell" 'NR<=10{printf "%s%s", sep, $0; sep="  "} END{if (NR>10) printf "  %s", ell; if (NR) print ""}' | cut -c1-$((_p_width - 2)) | sed 's/^/  /'
 }
 
 _portal_next() {
   local root="$1" behind
   if command -v crontab >/dev/null 2>&1; then
     crontab -l 2>/dev/null | grep -q '>>> passive_income_swarm >>>' || {
-      printf '%s\n' "${_p_dim}next${_p_off}    bash tools/bootstrap.sh   ${_p_dim}(install the schedule)${_p_off}"
+      printf '%s\n' "${_p_dim}next${_p_off}    $(_p_clip 'bash tools/bootstrap.sh   (install the schedule)' $((_p_width - 8)))"
       return 0
     }
   fi
   behind="$(git -C "$root" rev-list --count 'HEAD..@{u}' 2>/dev/null | tr -d ' ')"
   if [ -n "${behind:-}" ] && [ "${behind:-0}" -gt 0 ] 2>/dev/null; then
-    printf '%s\n' "${_p_dim}next${_p_off}    bash tools/install.sh     ${_p_dim}($behind behind origin)${_p_off}"
+    printf '%s\n' "${_p_dim}next${_p_off}    $(_p_clip "bash tools/install.sh     ($behind behind origin)" $((_p_width - 8)))"
   else
-    printf '%s\n' "${_p_dim}next${_p_off}    ./swarmctl cron status   ·   portal -a"
+    printf '%s\n' "${_p_dim}next${_p_off}    $(_p_clip './swarmctl cron status  -  portal -a' $((_p_width - 8)))"
   fi
 }
 
@@ -323,17 +409,17 @@ _portal_render() {
   [ -d "$root" ] || return 0
   _portal_paint
   _portal_probe "$root"
-  printf '%s\n' "${_p_dim}────────────────────────────────────────${_p_off}"
+  printf '\n'
   if ! _portal_banner "$root"; then
     printf '%s\n' "${_p_bold}passive_income_swarm${_p_off}  ${_p_dim}not a checkout${_p_off}"
     return 0
   fi
   case "$flags" in *s*) _portal_status ;; esac
   case "$flags" in *h*) _portal_health_line ;; esac
+  case "$flags" in *e*) _portal_agents ;; esac
   case "$flags" in *n*) _portal_next "$root" ;; esac
   case "$flags" in *l*) _portal_files "$root" ;; esac
   case "$flags" in *r*) _portal_roadmap "$root" ;; esac
-  printf '%s\n' "${_p_dim}────────────────────────────────────────${_p_off}"
 }
 
 portal() {
@@ -344,13 +430,15 @@ portal() {
   else
     for arg in "$@"; do
       case "$arg" in
-        -a|--all) flags="srnhl" ;;
+        -a|--all) flags="srnhel" ;;
         -s|--status) flags="${flags}s" ;;
         -r|--roadmap) flags="${flags}r" ;;
         -h|--health|--swarm) flags="${flags}h" ;;
+        -e|--agents|--entities) flags="${flags}e" ;;
         -l|--list|--ls) flags="${flags}l" ;;
         -n|--next) flags="${flags}n" ;;
         -v|--verbose) _p_verbose=1 ;;
+        --ascii) SWARM_PORTAL_ASCII=1 ;;
         -q|--quiet) flags="" ;;
         --help) _portal_help; return 0 ;;
         *) printf 'portal: unknown flag %s\n' "$arg" >&2; _portal_help >&2; return 2 ;;
@@ -371,7 +459,7 @@ _swarm_portal_hook() {
   fi
   [ "$PWD" = "$_swarm_portal_last" ] && return 0
   _swarm_portal_last="$PWD"
-  _portal_render "${SWARM_PORTAL_FLAGS-srn}"
+  _portal_render "${SWARM_PORTAL_FLAGS-srnh}"
 }
 
 if [ -n "${BASH_VERSION:-}" ]; then
@@ -406,7 +494,7 @@ _portal_strip() {
 }
 
 _portal_cli() {
-  local action="${1:-}" rc="" arg tmp line
+  local action="${1:-}" rc="" tmp line
   shift 2>/dev/null || true
   while [ "$#" -gt 0 ]; do
     case "$1" in

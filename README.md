@@ -302,7 +302,13 @@ Sourcing `tools/portal.sh` puts a door on the checkout: land in the repo root
 and the shell prints the branch and commit, a swarm health dot, cron health,
 whether the box is safe to charge, the README's roadmap, and the next useful
 command. No daemon and no network — it reads git, the crontab,
-`logs/console-telemetry.json`, `logs/readiness.json` and `README.md`.
+`logs/console-telemetry.json`, `logs/readiness.json`, `cabinet.json` and
+`README.md`.
+
+The layout is deliberately plain: no frames, no rules, no animation, every line
+clipped to the terminal width, so it reads the same in a 40-column tmux pane as
+in a full window. `portal --agents` prints the cabinet roster one agent per line
+for when you want the roster rather than the summary.
 
 ```bash
 bash tools/portal.sh --install     # add the hook to ~/.zshrc or ~/.bashrc
@@ -310,8 +316,10 @@ bash tools/portal.sh --install     # add the hook to ~/.zshrc or ~/.bashrc
 . ~/passive_income_swarm/tools/portal.sh
 
 portal              # the full render, from anywhere
-portal -a           # also list the files
+portal --agents     # the cabinet roster, one agent per line
+portal -a           # every section, including files and agents
 portal --health -v  # the stats behind the health dot
+portal --ascii      # ASCII glyphs only
 portal -q           # banner and dot only
 ```
 
@@ -327,7 +335,9 @@ every prompt into a report. Settings are a single letter string:
 
 | setting | meaning |
 |---|---|
-| `SWARM_PORTAL_FLAGS="srnh"` | default sections — `s` cron, `r` roadmap, `n` next, `h` swarm health; add `l` for files |
+| `SWARM_PORTAL_FLAGS="srnh"` | default sections — `s` cron, `r` roadmap, `n` next, `h` swarm health; `e` agents, `l` files |
+| `SWARM_PORTAL_ASCII=1` | never emit a non-ASCII glyph (also `portal --ascii`) |
+| `SWARM_PORTAL_WIDTH=80` | clip to this width instead of `$COLUMNS` |
 | `SWARM_PORTAL=0` | disable the hook for this shell |
 | `SWARM_PORTAL_ROOT` | point at a different checkout |
 
