@@ -1,6 +1,16 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # swarmctl — control plane entry point.
 # Run as: bash ./swarmctl <command>   (the executable bit may be stripped on deploy)
 set -euo pipefail
 cd "$(dirname "$0")"
-exec python3 -m swarm.cli "$@"
+
+PYTHON="${SWARM_PYTHON:-}"
+if [ -z "$PYTHON" ]; then
+  PYTHON="$(command -v python3 || command -v python || true)"
+fi
+if [ -z "$PYTHON" ]; then
+  printf 'swarmctl: python3 not found on PATH — install python3, then re-run\n' >&2
+  exit 1
+fi
+
+exec "$PYTHON" -m swarm.cli "$@"

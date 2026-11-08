@@ -75,6 +75,12 @@ if ! command -v git >/dev/null 2>&1; then
   exit 1
 fi
 
+if [ -e "$REPO" ] && [ ! -d "$REPO" ]; then
+  warn "checkout path exists but is not a directory: $REPO"
+  warn "move it aside, then re-run (nothing was changed)."
+  exit 1
+fi
+
 if [ -e "$REPO/.git" ]; then
   if [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then
     say "git        : local changes present — not touching the checkout"
@@ -97,6 +103,10 @@ if [ -e "$REPO/.git" ]; then
       warn "  fetch failed — using what is already on disk"
     fi
   fi
+elif [ -d "$REPO" ] && [ -n "$(ls -A "$REPO" 2>/dev/null)" ]; then
+  warn "checkout path exists but is not a git checkout: $REPO"
+  warn "move it aside (or pass --repo PATH), then re-run — nothing was changed."
+  exit 1
 else
   mkdir -p "$(dirname "$REPO")" || { warn "cannot create $(dirname "$REPO")"; exit 1; }
   say "git        : cloning"
@@ -122,7 +132,7 @@ elif [ "$DRY" = "1" ]; then
   say "dry run    : nothing installed"
 else
   say "installed  : $REPO"
-  say "health     : cd $REPO && ./swarmctl cron status"
+  say "health     : bash $REPO/swarmctl cron status"
   say "portal     : bash $REPO/tools/portal.sh --install   (make the checkout greet you)"
 fi
 exit "$status"

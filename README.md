@@ -313,6 +313,10 @@ diverged checkout is left alone, and bootstrap replaces its own cron block
 instead of stacking a second one. `--repo PATH` installs elsewhere, `--no-cron`
 leaves the crontab alone, `--dry-run` prints the block and changes nothing.
 
+If `~/passive_income_swarm` already exists but is not a git checkout, the
+installer stops before touching it and says so. Move that folder aside (do not
+delete it until you have looked inside), then re-run.
+
 Offline, or if you would rather see every step, the two commands it replaces:
 
 ```bash
