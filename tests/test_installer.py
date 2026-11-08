@@ -96,13 +96,22 @@ class InstallerLocalChangeTests(unittest.TestCase):
 
     def test_unrelated_local_change_is_preserved_through_the_update(self):
         (self.consumer / "notes.txt").write_text("mine\n")
-        self._upstream("add b", {"b.txt": "b\n"})
+        self._upstream(
+            "add b and portal", {"b.txt": "b\n", "tools/portal.sh": "#!/bin/sh\n"}
+        )
 
         result = self._install()
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.consumer / "b.txt").exists())
         self.assertEqual((self.consumer / "notes.txt").read_text(), "mine\n")
+
+    def test_checkout_without_portal_is_not_reported_as_installed(self):
+        result = self._install()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("update did not land", result.stderr)
+        self.assertNotIn("installed  :", result.stdout)
 
 
 if __name__ == "__main__":

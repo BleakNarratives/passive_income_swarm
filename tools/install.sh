@@ -126,8 +126,10 @@ else
   fi
 fi
 
-if [ ! -f "$REPO/tools/bootstrap.sh" ]; then
-  warn "no tools/bootstrap.sh in $REPO — the checkout looks incomplete."
+if [ ! -f "$REPO/tools/bootstrap.sh" ] || [ ! -f "$REPO/tools/portal.sh" ]; then
+  warn "checkout is incomplete (bootstrap.sh or portal.sh missing) — the update did not land."
+  warn "inspect: git -C $REPO log -1 --oneline && git -C $REPO status --short"
+  warn "nothing was bootstrapped."
   exit 1
 fi
 
