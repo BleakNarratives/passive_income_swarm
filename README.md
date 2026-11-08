@@ -17,6 +17,17 @@ curation/           Content curation pipeline
 dna_mutation/       Agent evolution and optimization
 ```
 
+## Syntax (direction, not built)
+
+The longer-term direction is an environment rather than a bigger repo: Syntax
+composes the pieces above instead of merging them — a distributed intelligence
+layer, specialist agents that delegate and challenge each other, shared memory
+through NAT, replaceable models, and a recognisable identity layer. **None of it
+is implemented here.** The boundary, the reuse inventory, the public/private
+split and the dependency-ordered sequence are recorded in
+[docs/SYNTAX.md](docs/SYNTAX.md), and that document is the thing to read before
+any feature in this area starts.
+
 ## Quick Start
 
 ```bash
