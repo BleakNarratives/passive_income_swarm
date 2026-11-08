@@ -358,8 +358,15 @@ function render(data){
 
   /* header */
   const modePill = $("modePill");
-  modePill.textContent = worker.paid_mode_env ? "paid mode" : "reputation mode";
-  modePill.className = "pill " + (worker.paid_mode_env ? "paid" : "");
+  // worker.paid_mode is the worker's *config* (dvm.env or env), not this
+  // console process's environment — the two are different and used to disagree.
+  const paid = !!worker.paid_mode;
+  modePill.textContent = paid ? "paid mode" : "reputation mode";
+  modePill.className = "pill " + (paid ? "paid" : "");
+  modePill.title = paid
+    ? "charging for jobs (source: " + (worker.paid_mode_source || "?") +
+      ") — configuration, not proof the rail can settle"
+    : "serving for free: DVM_PAID_ONLY is off or unset here and in nostr_dvm/dvm.env";
   const b = (data.swarm || {}).breaker || {};
   const bp = $("breakerPill");
   bp.textContent = b.locked ? "janus locked" : "breaker open";

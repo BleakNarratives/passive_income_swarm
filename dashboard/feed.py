@@ -345,18 +345,77 @@ def _connections_snapshot(root: Path) -> Dict[str, Any]:
     return report
 
 
+def _truthy(raw: Any) -> bool:
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _dvm_env(root: Path) -> Dict[str, str]:
+    """Read ``nostr_dvm/dvm.env`` the way systemd's EnvironmentFile does.
+
+    The console is a separate process from the worker, so ``os.environ`` here
+    says nothing about what the worker was configured to do — it reported
+    "reputation mode" on a box that had been charging for days. Reading the file
+    is the only way the header can tell the truth. The live environment wins when
+    both are present, because a shell export is the narrower, more deliberate act.
+    """
+    values: Dict[str, str] = {}
+    try:
+        text = (root / "nostr_dvm" / "dvm.env").read_text(encoding="utf-8")
+    except OSError:
+        return values
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+def _setting(name: str, file_values: Dict[str, str], default: str = "") -> tuple:
+    """Return (value, source), preferring the live environment."""
+    live = os.environ.get(name)
+    if live:
+        return live, "environment"
+    if file_values.get(name):
+        return file_values[name], "nostr_dvm/dvm.env"
+    return default, ""
+
+
 def _worker_snapshot(root: Path, jobs: List[Dict[str, Any]], now: float) -> Dict[str, Any]:
     last = jobs[-1] if jobs else {}
     last_ts = float(last.get("ts") or 0)
+    file_values = _dvm_env(root)
+    paid_live = _truthy(os.environ.get("DVM_PAID_ONLY", ""))
+    paid_file = _truthy(file_values.get("DVM_PAID_ONLY", ""))
+    if paid_live and paid_file:
+        source = "environment + nostr_dvm/dvm.env"
+    elif paid_live:
+        source = "environment"
+    elif paid_file:
+        source = "nostr_dvm/dvm.env"
+    else:
+        source = "unset"
+    try:
+        fees = {
+            5002: int(_setting("DVM_FEE_5002_MSAT", file_values, "50000")[0]),
+            5003: int(_setting("DVM_FEE_5003_MSAT", file_values, "20000")[0]),
+        }
+    except (TypeError, ValueError):
+        fees = {5002: 50000, 5003: 20000}
     return {
-        "paid_mode_env": os.environ.get("DVM_PAID_ONLY", "0") == "1",
-        "fees_msat": {
-            5002: int(os.environ.get("DVM_FEE_5002_MSAT", "50000")),
-            5003: int(os.environ.get("DVM_FEE_5003_MSAT", "20000")),
-        },
+        # What the worker is *configured* to do — this is what the header shows.
+        "paid_mode": paid_live or paid_file,
+        "paid_mode_source": source,
+        # What this console process can see. Both are kept, separately, because
+        # conflating them is the bug this replaced.
+        "paid_mode_env": paid_live,
+        "paid_mode_file": paid_file,
+        "fees_msat": fees,
         "rail_configured": (root / "keys" / "nwc.secret").exists(),
         "signing_key_present": (root / "keys" / "nostr.key").exists(),
-        "groq_key_present": bool(os.environ.get("GROQ_API_KEY")),
+        # Same reasoning as paid_mode: systemd supplies this, the console does not.
+        "groq_key_present": bool(_setting("GROQ_API_KEY", file_values)[0]),
         "jobs_log": str(root / "nostr_dvm" / "logs" / "jobs.jsonl"),
         "last_job_ts": last_ts,
         "seconds_since_last_job": round(max(0.0, now - last_ts), 1) if last_ts else None,
