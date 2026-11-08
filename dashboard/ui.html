@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operator Console — BleakNarratives Swarm</title>
+<link rel="icon" href="data:,">
+<style>
+  :root{
+    --bg:#08090b; --panel:#0d0f13; --panel-2:#111419; --line:#1e232b;
+    --ink:#e8ecf1; --muted:#8b95a4; --dim:#5c6675;
+    --money:#b8f14a; --warn:#f5a524; --bad:#ff5c5c; --cool:#5ec8f5; --violet:#a78bfa;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:
+      radial-gradient(1200px 600px at 85% -10%, rgba(184,241,74,.06), transparent 60%),
+      radial-gradient(900px 500px at -10% 10%, rgba(94,200,245,.05), transparent 60%),
+      var(--bg);
+    color:var(--ink); font-family:var(--sans); font-size:13px; line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:0; opacity:.35;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:64px 64px; mask-image:radial-gradient(circle at 50% 0%,#000 0%,transparent 75%);
+  }
+  .wrap{position:relative;z-index:1;max-width:1520px;margin:0 auto;padding:20px 22px 60px}
+  .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+
+  /* header */
+  header.top{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding-bottom:14px;border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:baseline;gap:10px}
+  .brand b{font-size:15px;letter-spacing:.14em;text-transform:uppercase}
+  .brand span{color:var(--dim);font-family:var(--mono);font-size:11px}
+  .spacer{flex:1}
+  .pill{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+    padding:4px 9px;border:1px solid var(--line);border-radius:999px;color:var(--muted);background:var(--panel)}
+  .pill.paid{color:#0a0d05;background:var(--money);border-color:var(--money);font-weight:700}
+  .pill.warn{color:var(--warn);border-color:rgba(245,165,36,.4)}
+  .pill.bad{color:var(--bad);border-color:rgba(255,92,92,.4)}
+  .live{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--dim);box-shadow:0 0 0 0 transparent}
+  .dot.on{background:var(--money);animation:pulse 2.4s infinite}
+  .dot.off{background:var(--bad)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(184,241,74,.5)}70%{box-shadow:0 0 0 7px rgba(184,241,74,0)}100%{box-shadow:0 0 0 0 rgba(184,241,74,0)}}
+  kbd{font-family:var(--mono);font-size:10px;border:1px solid var(--line);border-bottom-width:2px;
+    border-radius:4px;padding:1px 5px;color:var(--muted);background:var(--panel-2)}
+
+  /* grid + panels */
+  .grid{display:grid;gap:14px;margin-top:16px}
+  .tiles{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .two{grid-template-columns:1.15fr .85fr}
+  .three{grid-template-columns:1fr 1fr 1fr}
+  @media(max-width:1100px){.tiles{grid-template-columns:repeat(2,1fr)}.two,.three{grid-template-columns:1fr}}
+  .panel{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);
+    border-radius:12px;padding:14px 15px;min-width:0}
+  .panel h2{margin:0 0 12px;font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);
+    display:flex;align-items:center;gap:8px;font-weight:600}
+  .panel h2 .tag{letter-spacing:.04em;text-transform:none;font-family:var(--mono);color:var(--dim);font-weight:400}
+  .empty{color:var(--dim);font-family:var(--mono);font-size:11.5px;padding:10px 0}
+
+  /* tiles */
+  .tile{position:relative;overflow:hidden}
+  .tile .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+  .tile .v{font-size:34px;font-weight:650;letter-spacing:-.02em;margin-top:2px;font-variant-numeric:tabular-nums}
+  .tile .v small{font-size:13px;font-weight:500;color:var(--muted);margin-left:5px;letter-spacing:0}
+  .tile .s{font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-top:5px}
+  .tile.earn .v{color:var(--money)}
+  .tile.owed{border-color:rgba(255,92,92,.35)}
+  .tile.owed .v{color:var(--bad)}
+  .tile.owed.hot{animation:hot 2.6s infinite}
+  @keyframes hot{0%,100%{box-shadow:inset 0 0 0 0 rgba(255,92,92,0)}50%{box-shadow:inset 0 0 40px -12px rgba(255,92,92,.55)}}
+
+  /* funnel */
+  .funnel{display:flex;flex-direction:column;gap:9px}
+  .fstep{display:grid;grid-template-columns:78px 1fr 96px;align-items:center;gap:10px}
+  .fstep .n{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.04em}
+  .fbar{height:22px;background:#14181e;border-radius:5px;overflow:hidden;position:relative}
+  .fbar i{position:absolute;inset:0 auto 0 0;border-radius:5px;transition:width .5s cubic-bezier(.2,.8,.2,1)}
+  .fbar span{position:absolute;inset:0;display:flex;align-items:center;padding-left:8px;
+    font-family:var(--mono);font-size:10.5px;color:#0a0d05;font-weight:700;mix-blend-mode:luminosity}
+  .fstep .d{font-family:var(--mono);font-size:10.5px;text-align:right;color:var(--dim)}
+  .fstep .d.bad{color:var(--warn)}
+
+  /* invoice wall */
+  .wall{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:9px;max-height:280px;overflow:auto}
+  .inv{background:#0f1217;border:1px solid var(--line);border-radius:9px;padding:9px;display:flex;gap:9px;align-items:center;position:relative}
+  .inv .ring{flex:0 0 34px}
+  .inv .meta{min-width:0}
+  .inv .amt{font-family:var(--mono);font-size:12.5px;font-weight:700;color:var(--warn)}
+  .inv .id{font-family:var(--mono);font-size:10px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .inv .cd{font-family:var(--mono);font-size:10px;color:var(--dim)}
+  .ring circle{fill:none;stroke-width:4}
+  .ring .bg{stroke:#1a1f26}
+  .ring .fg{stroke:var(--warn);stroke-linecap:round;transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .6s linear}
+
+  /* chart */
+  .chart{display:flex;align-items:flex-end;gap:4px;height:132px;padding-top:6px}
+  .chart .bar{flex:1;background:linear-gradient(180deg,rgba(184,241,74,.85),rgba(184,241,74,.25));
+    border-radius:3px 3px 0 0;min-height:2px;position:relative;transition:height .5s}
+  .chart .bar.proj{background:repeating-linear-gradient(135deg,rgba(94,200,245,.55) 0 3px,transparent 3px 6px);
+    border:1px dashed rgba(94,200,245,.5);border-radius:3px 3px 0 0}
+  .chart .bar span{position:absolute;bottom:-16px;left:0;right:0;text-align:center;font-family:var(--mono);
+    font-size:9px;color:var(--dim)}
+  .chart .bar b{position:absolute;top:-15px;left:50%;transform:translateX(-50%);font-family:var(--mono);
+    font-size:9px;color:var(--muted);font-weight:500;white-space:nowrap;opacity:0}
+  .chart .bar:hover b{opacity:1}
+  .legend{display:flex;gap:14px;margin-top:22px;font-family:var(--mono);font-size:10px;color:var(--dim);flex-wrap:wrap}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  .verdict{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:10px;line-height:1.5}
+  .verdict b{color:var(--cool);font-weight:600}
+
+  /* integrity */
+  .checks{display:flex;flex-direction:column;gap:8px}
+  .check{display:grid;grid-template-columns:16px 1fr;gap:9px;align-items:start}
+  .check .mk{width:9px;height:9px;border-radius:50%;margin-top:4px}
+  .check .mk.ok{background:var(--money);box-shadow:0 0 9px rgba(184,241,74,.5)}
+  .check .mk.no{background:var(--bad);box-shadow:0 0 9px rgba(255,92,92,.5)}
+  .check .lbl{font-size:12px;color:var(--ink)}
+  .check .det{font-family:var(--mono);font-size:10px;color:var(--dim);margin-top:1px}
+
+  /* cabinet */
+  .cabinet{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+  .slot{aspect-ratio:1;border:1px solid var(--line);border-radius:7px;background:#0c0f13;
+    display:flex;flex-direction:column;justify-content:space-between;padding:5px;cursor:default;
+    transition:transform .15s,border-color .15s;position:relative;overflow:hidden}
+  .slot:hover{transform:translateY(-2px);border-color:var(--dim)}
+  .slot .s{font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:.06em}
+  .slot .nm{font-size:9.5px;line-height:1.15;color:var(--muted);overflow:hidden;text-overflow:ellipsis;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .slot.daemon{border-left:2px solid var(--money)}
+  .slot.agent{border-left:2px solid var(--cool)}
+  .slot.scout{border-left:2px solid var(--violet)}
+  .slot.subagent{border-left:2px solid #6b7280}
+  .slot.persona{border-left:2px solid var(--warn)}
+  .slot.seen{background:#0f1510}
+  .slot.seen .s::after{content:" ●";color:var(--money)}
+  .slot.empty{opacity:.35}
+
+  /* tables */
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
+  th{text-align:left;color:var(--dim);font-weight:500;font-size:9.5px;letter-spacing:.11em;
+    text-transform:uppercase;padding:0 8px 7px 0;border-bottom:1px solid var(--line)}
+  td{padding:6px 8px 6px 0;border-bottom:1px solid rgba(30,35,43,.55);color:var(--muted);white-space:nowrap}
+  tr:last-child td{border-bottom:0}
+  td.mono{color:var(--ink)}
+  .oc{font-size:9.5px;padding:2px 6px;border-radius:4px;letter-spacing:.03em}
+  .oc.served{background:rgba(184,241,74,.13);color:var(--money)}
+  .oc.unpaid{background:rgba(245,165,36,.13);color:var(--warn)}
+  .oc.error,.oc.rail_error,.oc.fail{background:rgba(255,92,92,.13);color:var(--bad)}
+  .oc.refused{background:rgba(167,139,250,.14);color:var(--violet)}
+  .oc.replayed{background:rgba(94,200,245,.13);color:var(--cool)}
+  .scroll{max-height:320px;overflow:auto}
+
+  /* bars list */
+  .bars{display:flex;flex-direction:column;gap:7px}
+  .brow{display:grid;grid-template-columns:96px 1fr 52px;gap:8px;align-items:center}
+  .brow .n{font-family:var(--mono);font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .brow .t{height:7px;background:#14181e;border-radius:4px;overflow:hidden}
+  .brow .t i{display:block;height:100%;background:linear-gradient(90deg,var(--violet),var(--cool));border-radius:4px}
+  .brow .v{font-family:var(--mono);font-size:10px;color:var(--dim);text-align:right}
+
+  /* footer + palette */
+  footer{margin-top:22px;padding-top:14px;border-top:1px solid var(--line);font-family:var(--mono);
+    font-size:10px;color:var(--dim);display:flex;gap:18px;flex-wrap:wrap}
+  footer b{color:var(--muted);font-weight:500}
+  .palette{position:fixed;inset:0;z-index:50;display:none;align-items:flex-start;justify-content:center;
+    background:rgba(4,5,7,.72);backdrop-filter:blur(3px);padding-top:14vh}
+  .palette.on{display:flex}
+  .palette .box{width:min(560px,92vw);background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    overflow:hidden;box-shadow:0 30px 80px -20px #000}
+  .palette input{width:100%;background:transparent;border:0;border-bottom:1px solid var(--line);
+    padding:14px 16px;color:var(--ink);font-family:var(--mono);font-size:13px;outline:none}
+  .palette .list{max-height:300px;overflow:auto}
+  .palette .item{padding:10px 16px;display:flex;justify-content:space-between;gap:12px;cursor:pointer;
+    font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+  .palette .item.sel,.palette .item:hover{background:var(--panel-2);color:var(--ink)}
+  .palette .item em{color:var(--dim);font-style:normal;font-size:10px}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(30px);z-index:60;
+    background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:10px 14px;
+    font-family:var(--mono);font-size:11px;color:var(--ink);opacity:0;transition:.25s;max-width:80vw}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><b>Operator Console</b><span>passive_income_swarm</span></div>
+    <div class="spacer"></div>
+    <div id="modePill" class="pill">mode ?</div>
+    <div id="breakerPill" class="pill">breaker ?</div>
+    <div class="live"><span id="liveDot" class="dot"></span><span id="liveTxt">connecting</span></div>
+    <div><kbd>⌘K</kbd> <kbd>ctrl K</kbd></div>
+  </header>
+
+  <div class="grid tiles">
+    <div class="panel tile earn">
+      <div class="k">settled</div>
+      <div class="v" id="tEarned">—<small>sats</small></div>
+      <div class="s" id="tEarnedSub">no ledger yet</div>
+    </div>
+    <div class="panel tile owed" id="tOwedTile">
+      <div class="k">paid, undelivered</div>
+      <div class="v" id="tOwed">—<small>jobs</small></div>
+      <div class="s" id="tOwedSub">money owed to a customer</div>
+    </div>
+    <div class="panel tile">
+      <div class="k">open invoices</div>
+      <div class="v" id="tOpen">—<small>live</small></div>
+      <div class="s" id="tOpenSub">awaiting sats</div>
+    </div>
+    <div class="panel tile">
+      <div class="k">served</div>
+      <div class="v" id="tServed">—<small>jobs</small></div>
+      <div class="s" id="tServedSub">answers published</div>
+    </div>
+  </div>
+
+  <div class="grid two">
+    <div class="panel">
+      <h2>money funnel <span class="tag">where the sats stop</span></h2>
+      <div class="funnel" id="funnel"><div class="empty">no paid jobs recorded yet</div></div>
+    </div>
+    <div class="panel">
+      <h2>invoice wall <span class="tag" id="wallCount"></span></h2>
+      <div class="wall" id="wall"><div class="empty">no open invoices</div></div>
+    </div>
+  </div>
+
+  <div class="grid two">
+    <div class="panel">
+      <h2>daily settled + projection <span class="tag" id="fcModel"></span></h2>
+      <div class="chart" id="chart"></div>
+      <div class="legend">
+        <span><i style="background:rgba(184,241,74,.75)"></i>settled / day</span>
+        <span><i style="border:1px dashed rgba(94,200,245,.7)"></i>projected</span>
+        <span id="fcTruth"></span>
+      </div>
+      <div class="verdict" id="fcVerdict"></div>
+    </div>
+    <div class="panel">
+      <h2>integrity <span class="tag">checked against the live ledger</span></h2>
+      <div class="checks" id="checks"><div class="empty">open the settlement ledger to run checks</div></div>
+    </div>
+  </div>
+
+  <div class="grid two">
+    <div class="panel">
+      <h2>cabinet <span class="tag" id="cabTag">6 × 6 slots</span></h2>
+      <div class="cabinet" id="cabinet"></div>
+    </div>
+    <div class="panel">
+      <h2>job stream <span class="tag" id="jobTag"></span></h2>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>when</th><th>job</th><th>kind</th><th>outcome</th><th>msat</th><th>lat</th></tr></thead>
+          <tbody id="jobs"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid two">
+    <div class="panel">
+      <h2>connections <span class="tag" id="connTag">never probed</span></h2>
+      <div class="checks" id="connections"><div class="empty">run `swarmctl connections --probe --save`</div></div>
+    </div>
+    <div class="panel">
+      <h2>capability coverage <span class="tag" id="capTag"></span></h2>
+      <div class="bars" id="coverage"><div class="empty">no report yet</div></div>
+      <div class="verdict" id="connNote"></div>
+    </div>
+  </div>
+
+  <div class="grid three">
+    <div class="panel">
+      <h2>pheromone trails <span class="tag">decayed attention</span></h2>
+      <div class="bars" id="pheromones"><div class="empty">bus is quiet</div></div>
+    </div>
+    <div class="panel">
+      <h2>skills <span class="tag" id="skillTag"></span></h2>
+      <div class="bars" id="skills"><div class="empty">skill store not seeded</div></div>
+    </div>
+    <div class="panel">
+      <h2>top requesters</h2>
+      <div class="bars" id="requesters"><div class="empty">nobody has paid yet</div></div>
+    </div>
+  </div>
+
+  <footer>
+    <span>root <b id="fRoot">—</b></span>
+    <span>snapshot <b id="fGen">—</b></span>
+    <span id="fWrite"></span>
+    <span>reading <b>settlements.db · jobs.jsonl · swarm.jsonl · cabinet.json · bus.jsonl</b></span>
+  </footer>
+</div>
+
+<div class="palette" id="palette">
+  <div class="box">
+    <input id="paletteInput" placeholder="run a command…  (esc to close)" autocomplete="off" spellcheck="false">
+    <div class="list" id="paletteList"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const S = { data:null, writable:false, actions:[], es:null, timer:null, connected:false };
+const MAXINV = 24;
+
+/* ---------- formatting ---------- */
+function sats(msat){ return Number(msat || 0) / 1000; }
+function fmtSats(msat){
+  const n = sats(msat);
+  if (!isFinite(n)) return "0";
+  if (n === 0) return "0";
+  return n.toLocaleString(undefined,{ maximumFractionDigits: n < 100 ? 1 : 0 });
+}
+function fmtCount(n){ return Number(n||0).toLocaleString(); }
+function short(id){ return String(id||"").slice(0,10); }
+function ago(ts){
+  if(!ts) return "—";
+  const d = Math.max(0, Date.now()/1000 - ts);
+  if (d < 60) return Math.floor(d)+"s";
+  if (d < 3600) return Math.floor(d/60)+"m";
+  if (d < 86400) return Math.floor(d/3600)+"h";
+  return Math.floor(d/86400)+"d";
+}
+function esc(v){ return String(v==null?"":v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function cls(outcome){
+  const o = String(outcome||"");
+  if (o === "served_paid" || o === "served_free") return "served";
+  if (o === "payment_timeout") return "unpaid";
+  if (o === "replayed_served") return "replayed";
+  if (o.indexOf("inference_error") === 0) return "error";
+  if (o === "payment_rail_error") return "rail_error";
+  if (o === "invoice_conflict" || o === "input_mismatch" || o === "failed_previously") return "refused";
+  return "unpaid";
+}
+
+/* ---------- render ---------- */
+function render(data){
+  if (!data || data.error) return;
+  S.data = data;
+  const money = data.money || {};
+  const c = money.counters || {};
+  const integ = money.integrity || [];
+  const worker = data.worker || {};
+
+  /* header */
+  const modePill = $("modePill");
+  modePill.textContent = worker.paid_mode_env ? "paid mode" : "reputation mode";
+  modePill.className = "pill " + (worker.paid_mode_env ? "paid" : "");
+  const b = (data.swarm || {}).breaker || {};
+  const bp = $("breakerPill");
+  bp.textContent = b.locked ? "janus locked" : "breaker open";
+  bp.className = "pill " + (b.locked ? "bad" : "");
+
+  /* tiles */
+  $("tEarned").innerHTML = fmtSats(c.earned_msat) + "<small>sats</small>";
+  $("tEarnedSub").textContent = money.available
+    ? (c.settled||0) + " settled invoices · " + (c.requested||0) + " requested"
+    : (money.reason || "no ledger yet");
+  const owed = c.unserved_paid || 0;
+  $("tOwed").innerHTML = fmtCount(owed) + "<small>jobs</small>";
+  $("tOwedSub").textContent = owed ? "fix these first — customer already paid" : "nothing owed to anyone";
+  $("tOwedTile").className = "panel tile owed" + (owed ? " hot" : "");
+  $("tOpen").innerHTML = fmtCount((money.open_invoices||[]).length) + "<small>live</small>";
+  $("tOpenSub").textContent = (c.expired||0) + " expired unpaid · " + (c.failed||0) + " invoice failures";
+  $("tServed").innerHTML = fmtCount(c.served) + "<small>jobs</small>";
+  $("tServedSub").textContent = (c.earned_msat ? "avg " + fmtSats((c.earned_msat||0)/Math.max(1,c.served)) + " sats/job" : "—");
+
+  /* funnel */
+  const funnel = money.funnel || [];
+  $("funnel").innerHTML = funnel.length ? funnel.map((s,i) => {
+    const hues = ["rgba(184,241,74,.85)","rgba(184,241,74,.65)","rgba(94,200,245,.7)","rgba(167,139,250,.75)"];
+    const w = Math.max(2, s.pct_of_requested);
+    const drop = s.dropped ? `<span class="d bad">−${s.dropped}</span>` : `<span class="d">—</span>`;
+    return `<div class="fstep">
+      <div class="n">${esc(s.step)}</div>
+      <div class="fbar"><i style="width:${w}%;background:${hues[i%4]}"></i><span>${fmtCount(s.count)}</span></div>
+      ${drop}
+    </div>`;
+  }).join("") : `<div class="empty">no paid jobs recorded yet</div>`;
+
+  /* invoice wall */
+  const invs = (money.open_invoices || []).slice(0, MAXINV);
+  $("wallCount").textContent = invs.length ? invs.length + " waiting" : "";
+  $("wall").innerHTML = invs.length ? invs.map(inv => {
+    const total = Math.max(1, (inv.expires_at||0) - (inv.created_at||0));
+    const left = Math.max(0, Math.min(total, inv.seconds_left || 0));
+    const pct = left / total;
+    const C = 2 * Math.PI * 15;
+    const off = C * (1 - pct);
+    return `<div class="inv" title="${esc(inv.job_id)}">
+      <svg class="ring" width="34" height="34" viewBox="0 0 34 34">
+        <circle class="bg" cx="17" cy="17" r="15"></circle>
+        <circle class="fg" cx="17" cy="17" r="15" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"></circle>
+      </svg>
+      <div class="meta">
+        <div class="amt">${fmtSats(inv.fee_msat)} sat</div>
+        <div class="id">${esc(short(inv.job_id))}</div>
+        <div class="cd">${Math.round(left)}s left</div>
+      </div>
+    </div>`;
+  }).join("") : `<div class="empty">no open invoices</div>`;
+
+  /* chart + forecast */
+  drawChart(data);
+
+  /* integrity */
+  $("checks").innerHTML = integ.length ? integ.map(ch => `
+    <div class="check">
+      <div class="mk ${ch.ok ? "ok" : "no"}"></div>
+      <div><div class="lbl">${esc(ch.label)}</div><div class="det">${esc(ch.detail)}</div></div>
+    </div>`).join("") : `<div class="empty">open the settlement ledger to run checks</div>`;
+
+  /* cabinet */
+  drawCabinet(data.swarm || {});
+  drawConnections(data.connections);
+  if (data.demo) markDemo();
+
+  /* jobs */
+  const jobs = ((data.jobs || {}).recent || []);
+  $("jobTag").textContent = jobs.length ? jobs.length + " recent" : "";
+  $("jobs").innerHTML = jobs.length ? jobs.map(j => `
+    <tr>
+      <td>${esc(ago(j.ts))}</td>
+      <td class="mono">${esc(short(j.job_id))}</td>
+      <td>${esc(j.kind||"?")}</td>
+      <td><span class="oc ${cls(j.outcome)}">${esc(j.outcome||"?")}</span></td>
+      <td>${fmtCount(j.amount_msat||0)}</td>
+      <td>${esc(j.latency_s==null?"—":j.latency_s+"s")}</td>
+    </tr>`).join("") : `<tr><td colspan="6"><div class="empty">no jobs in the log</div></td></tr>`;
+
+  /* pheromones / skills / requesters */
+  const pher = (data.swarm || {}).pheromones || [];
+  $("pheromones").innerHTML = pher.length ? pher.map(p => {
+    const w = Math.max(3, Math.min(100, (Number(p.strength)||0) * 100));
+    return `<div class="brow"><div class="n">${esc(p.trail)}</div>
+      <div class="t"><i style="width:${w}%"></i></div>
+      <div class="v">${(Number(p.strength)||0).toFixed(2)}</div></div>`;
+  }).join("") : `<div class="empty">bus is quiet</div>`;
+
+  const skills = (data.swarm || {}).skills || {};
+  $("skillTag").textContent = skills.available ? (skills.count||0) + " tracked" : "";
+  $("skills").innerHTML = (skills.leaderboard||[]).length ? skills.leaderboard.map(s => {
+    const w = Math.max(3, Math.min(100, (Number(s.score)||0) * 100));
+    return `<div class="brow"><div class="n">${esc(s.id)}</div>
+      <div class="t"><i style="width:${w}%"></i></div>
+      <div class="v">${(Number(s.score)||0).toFixed(2)}</div></div>`;
+  }).join("") : `<div class="empty">skill store not seeded</div>`;
+
+  const reqs = (money.requesters || []);
+  const maxMsat = Math.max(1, ...reqs.map(r => r.msat||0));
+  $("requesters").innerHTML = reqs.length ? reqs.map(r => {
+    const w = Math.max(3, (r.msat/maxMsat)*100);
+    return `<div class="brow"><div class="n">${esc(short(r.requester))}</div>
+      <div class="t"><i style="width:${w}%;background:linear-gradient(90deg,var(--money),rgba(184,241,74,.3))"></i></div>
+      <div class="v">${fmtSats(r.msat)}</div></div>`;
+  }).join("") : `<div class="empty">nobody has paid yet</div>`;
+
+  /* footer */
+  $("fRoot").textContent = data.root || "—";
+  $("fGen").textContent = data.generated_at_iso || "—";
+  $("fWrite").innerHTML = S.writable
+    ? '<span style="color:var(--money)">actions enabled (DASHBOARD_TOKEN set)</span>'
+    : 'read-only · set DASHBOARD_TOKEN to enable actions';
+}
+
+function drawChart(data){
+  const fc = data.forecast || {};
+  const income = ((data.money || {}).income || []);
+  const chart = $("chart");
+  if (!income.length){
+    chart.innerHTML = `<div class="empty">no settled history yet</div>`;
+    $("fcVerdict").textContent = "";
+    $("fcModel").textContent = "";
+    return;
+  }
+  const proj = (fc.available ? (fc.predictions_msat||[]) : []).slice(0,7);
+  const all = income.map(d => d.msat).concat(proj);
+  const max = Math.max(1, ...all);
+  const bars = income.map(d => {
+    const h = Math.max(1.5, (d.msat/max)*100);
+    return `<div class="bar" style="height:${h}%"><b>${fmtSats(d.msat)}</b><span>${d.day_offset===0?"today":d.day_offset}</span></div>`;
+  }).join("");
+  const pj = proj.map((v,i) => {
+    const h = Math.max(1.5, (v/max)*100);
+    return `<div class="bar proj" style="height:${h}%"><b>~${fmtSats(v)}</b><span>+${i+1}</span></div>`;
+  }).join("");
+  chart.innerHTML = bars + pj;
+  $("fcModel").textContent = fc.available ? fc.model : "";
+  const bt = fc.backtest || {};
+  $("fcTruth").textContent = fc.available && bt.rmse != null
+    ? `backtest rmse ${bt.rmse} · mae ${bt.mae} · n=${bt.fold_size||0}`
+    : "";
+  $("fcVerdict").innerHTML = fc.available
+    ? `Next 7 days projected at <b>${fmtSats(proj.reduce((a,b)=>a+b,0))} sats</b> by <b>${esc(fc.model)}</b>. ` +
+      `Best of ${(fc.board||[]).length} candidates on walk-forward error` +
+      (bt.rmse != null ? ` (RMSE ${bt.rmse}).` : ".") +
+      `<br>${esc(fc.honesty||"")}`
+    : `<span style="color:var(--warn)">${esc(fc.reason || "no projection")}</span>`;
+}
+
+function drawCabinet(swarm){
+  const cab = swarm.cabinet || {};
+  const cols = (cab.columns || "ABCDEF").split("");
+  const rows = cab.rows || 6;
+  const bySlot = {};
+  (cab.entities || []).forEach(e => { if (e.slot) bySlot[e.slot] = e; });
+  const cells = [];
+  for (let r = 1; r <= rows; r++){
+    cols.forEach(col => {
+      const slot = col + r;
+      const e = bySlot[slot];
+      if (!e){ cells.push(`<div class="slot empty"><div class="s">${slot}</div><div class="nm"></div></div>`); return; }
+      const seen = e.last_seen ? " seen" : "";
+      cells.push(`<div class="slot ${esc(e.kind)}${seen}" title="${esc(e.display)} — ${esc(e.role)}">
+        <div class="s">${slot}</div><div class="nm">${esc(e.display)}</div></div>`);
+    });
+  }
+  $("cabinet").innerHTML = cells.join("");
+  $("cabTag").textContent = (cab.entities||[]).length + " occupants · " + cols.length + " × " + rows;
+}
+
+function markDemo(){
+  if (document.getElementById("demoflag")) return;
+  const flag = document.createElement("div");
+  flag.id = "demoflag";
+  flag.textContent = "DEMO DATA \u2014 synthetic settlements, no real sats";
+  flag.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99;" +
+    "background:#f5a524;color:#120c05;font:600 11px/1.8 ui-monospace,SFMono-Regular,monospace;" +
+    "text-align:center;letter-spacing:.14em";
+  document.body.appendChild(flag);
+  document.body.style.paddingTop = "24px";
+}
+
+function drawConnections(conns){
+  const c = conns || {};
+  const rows = c.connections || [];
+  $("connTag").textContent = c.checked_at
+    ? (c.probed ? "probed " : "configured ") + ago(Date.parse(c.checked_at)/1000) + " ago"
+    : "never probed";
+  $("connections").innerHTML = rows.length ? rows.map(x => {
+    const ok = x.status === "live" || x.status === "degraded" || x.status === "unverified";
+    return `<div class="check">
+      <div class="mk ${ok ? "ok" : "no"}"></div>
+      <div>
+        <div class="lbl">${esc(x.label)}
+          <span style="color:var(--dim);font-family:var(--mono);font-size:10px">${esc(x.status)}</span></div>
+        <div class="det">${esc(x.provider)} · ${esc(x.detail)}${x.latency_ms != null ? " · " + x.latency_ms + "ms" : ""}</div>
+      </div>
+    </div>`;
+  }).join("") : `<div class="empty">never probed — run the probe action (⌘K) or \`swarmctl connections --probe --save\`</div>`;
+
+  const cov = c.coverage || {};
+  const caps = Object.keys(cov);
+  $("capTag").textContent = caps.length ? caps.length + " capabilities · " + (c.summary ? (c.summary.unbound||0) : 0) + " unbound" : "";
+  const tone = (st) => st === "live" ? "linear-gradient(90deg,var(--money),rgba(184,241,74,.3))"
+    : st === "degraded" ? "linear-gradient(90deg,var(--cool),rgba(94,200,245,.3))"
+    : st === "unbound" ? "linear-gradient(90deg,var(--bad),rgba(255,92,92,.3))"
+    : "linear-gradient(90deg,var(--warn),rgba(245,165,36,.3))";
+  const width = (st) => st === "live" ? 100 : st === "unverified" ? 80 : st === "degraded" ? 68
+    : st === "unconfigured" ? 28 : st === "unbound" ? 6 : 12;
+  $("coverage").innerHTML = caps.length ? caps.map(n => {
+    const st = (cov[n] || {}).status || "?";
+    return `<div class="brow"><div class="n">${esc(n)}</div>
+      <div class="t"><i style="width:${width(st)}%;background:${tone(st)}"></i></div>
+      <div class="v">${esc(st)}</div></div>`;
+  }).join("") : `<div class="empty">no report yet</div>`;
+
+  const orphans = c.orphans || [];
+  $("connNote").innerHTML = c.available === false
+    ? esc(c.reason || "never probed")
+    : (orphans.length
+        ? `<span style="color:var(--bad)">${orphans.length} declared capability(s) nothing serves: ` +
+          esc(orphans.map(o => o.capability).join(", ")) + `</span>`
+        : (c.probed ? "every declared capability is bound; statuses are live probes."
+                    : "every declared capability is bound. Configured, not probed yet."));
+}
+
+/* ---------- transport ---------- */
+function setLive(on, label){
+  S.connected = on;
+  $("liveDot").className = "dot " + (on ? "on" : "off");
+  $("liveTxt").textContent = label;
+}
+function connect(){
+  if (S.es) { try { S.es.close(); } catch(e){} }
+  if (window.EventSource){
+    try {
+      const es = new EventSource("/api/stream");
+      S.es = es;
+      es.onopen = () => setLive(true, "live");
+      es.onmessage = (ev) => {
+        try { render(JSON.parse(ev.data)); setLive(true, "live"); }
+        catch(e){ /* ignore a torn frame */ }
+      };
+      es.onerror = () => { setLive(false, "reconnecting"); };
+    } catch(e){ poll(); }
+  } else { poll(); }
+  if (S.timer) clearInterval(S.timer);
+  S.timer = setInterval(() => { if (!S.es || S.es.readyState !== 1) poll(); }, 5000);
+}
+async function poll(){
+  try {
+    const r = await fetch("/api/state", { cache:"no-store" });
+    render(await r.json());
+    setLive(true, "polling");
+  } catch(e){ setLive(false, "offline"); }
+}
+async function loadActions(){
+  try {
+    const r = await fetch("/api/actions", { cache:"no-store" });
+    const j = await r.json();
+    S.writable = !!j.writable;
+    S.actions = (j.actions||[]).map(a => ({ ...a, kind:"action" }));
+  } catch(e){ S.actions = []; }
+  S.actions = S.actions.concat([
+    { id:"jump-money", label:"jump to the money panels", kind:"nav" },
+    { id:"refresh",    label:"refresh the snapshot now",   kind:"nav" },
+  ]);
+  if (S.data) render(S.data);
+}
+
+/* ---------- palette ---------- */
+function toast(msg){
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "toast on";
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.className = "toast"; }, 3200);
+}
+function openPalette(){
+  $("palette").className = "palette on";
+  const input = $("paletteInput");
+  input.value = "";
+  renderPalette("");
+  setTimeout(() => input.focus(), 10);
+}
+function closePalette(){ $("palette").className = "palette"; }
+let paletteSel = 0;
+function renderPalette(q){
+  const needle = q.toLowerCase();
+  const list = S.actions.filter(a => a.label.toLowerCase().includes(needle));
+  paletteSel = 0;
+  $("paletteList").innerHTML = list.length ? list.map((a,i) => `
+    <div class="item ${i===0?"sel":""}" data-i="${i}">
+      <span>${esc(a.label)}</span><em>${esc(a.id)}</em>
+    </div>`).join("") : `<div class="item"><span>no match</span><em></em></div>`;
+  $("paletteList")._list = list;
+  Array.from($("paletteList").children).forEach(el => {
+    el.onclick = () => runPalette(list[Number(el.dataset.i)]);
+  });
+}
+async function runPalette(item){
+  if (!item) return;
+  closePalette();
+  if (item.kind === "nav"){
+    if (item.id === "refresh"){ await poll(); toast("snapshot refreshed"); }
+    else window.scrollTo({ top:0, behavior:"smooth" });
+    return;
+  }
+  const token = localStorage.getItem("dashToken") || "";
+  const body = { action: item.id, token };
+  try {
+    const r = await fetch("/api/action", {
+      method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body)
+    });
+    const j = await r.json();
+    if (r.status === 403 && !token){
+      const entered = prompt("DASHBOARD_TOKEN required for actions:");
+      if (entered){ localStorage.setItem("dashToken", entered); return runPalette(item); }
+      return;
+    }
+    if (j.stdout) console.log(j.stdout);
+    toast((j.ok ? "✓ " : "✗ ") + item.id + (j.error ? ": " + j.error : "") +
+          (j.returncode!=null && !j.ok ? " (rc " + j.returncode + ")" : ""));
+  } catch(e){ toast("action failed: " + e); }
+}
+
+/* ---------- wiring ---------- */
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k"){ e.preventDefault(); openPalette(); return; }
+  if (e.key === "Escape") closePalette();
+  if ($("palette").className.includes("on")){
+    if (e.key === "ArrowDown" || e.key === "ArrowUp"){
+      e.preventDefault();
+      const items = Array.from($("paletteList").children);
+      if (!items.length) return;
+      paletteSel = (paletteSel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items.forEach((el,i) => el.className = "item" + (i===paletteSel?" sel":""));
+      items[paletteSel].scrollIntoView({ block:"nearest" });
+    }
+    if (e.key === "Enter"){
+      e.preventDefault();
+      runPalette($("paletteList")._list && $("paletteList")._list[paletteSel]);
+    }
+  }
+});
+$("palette").addEventListener("click", (e) => { if (e.target.id === "palette") closePalette(); });
+$("paletteInput").addEventListener("input", (e) => renderPalette(e.target.value));
+
+loadActions().then(() => { connect(); poll(); });
+</script>
+</body>
+</html>

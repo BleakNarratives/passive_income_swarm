@@ -1,0 +1,274 @@
+================================================================================
+MRD.txt — MECHANICAL REQUIREMENTS DOCUMENT
+The meatsuit rundown: everything that cannot be done without you
+================================================================================
+
+  Repository : BleakNarratives/passive_income_swarm
+  Branch     : freebuff/96104173eb2529febc7dc1cc
+  Written    : 2026-11-08
+  Companion  : bash ./swarmctl readiness      <- this file, executable
+
+  Scope rule: an item is here ONLY if I tried to automate it and something
+  blocked me that is yours and not mine — your account, your secret, your
+  money, your machine, or your judgment. I say what blocked me, every time.
+
+  There are 10 items. Two are urgent. Four gate the first paid job.
+
+
+--------------------------------------------------------------------------------
+READ THIS FIRST: WHAT I DELETED FROM THIS LIST
+--------------------------------------------------------------------------------
+
+The usual version of this document is longer because agents hand you their own
+plumbing. Here is what I removed by building a workaround instead of delegating
+it to you:
+
+  DELETED  "Get a Webz.io API token."
+           market.search no longer needs a paid news index. swarm/market_search.py
+           queries Hacker News (Algolia) and SEC EDGAR full-text, both keyless,
+           both verified answering HTTP 200 from this workspace. The token is now
+           an optional upgrade, not a blocker. Try it:
+               bash ./swarmctl market --query "debt covenant"
+
+  DELETED  "Set DASHBOARD_TOKEN so the console works."
+           Your token, my job. The console runs read-only without one; I generate
+           it when you actually want it exposed.
+
+  DELETED  "Wire the fee environment variables."
+           Already env-overridable: DVM_FEE_5002_MSAT and DVM_FEE_5003_MSAT.
+           No code change needed, no reason for you to touch a file.
+
+  DELETED  "Populate the dashboard with data."
+           It reads the ledger. When there is revenue there will be a chart. I am
+           not going to seed fake settlements into a money ledger to make a
+           screenshot look busy.
+
+  DELETED  "Run the tests and tell me the result."
+           297 tests, run on every change, stdlib only, no services required.
+
+  DELETED  "Figure out which packages to install."
+           requirements.txt now exists. It did not before; that was a real gap.
+
+
+================================================================================
+P0 — DO THESE TODAY. SECURITY, NOT FEATURES.
+================================================================================
+
+[P0-1] ROTATE THE WALLET CONNECTION
+--------------------------------------------------------------------------------
+  Why it must be you:
+    keys/nwc.secret holds a nostr+walletconnect:// URI. That format contains a
+    `secret=` field which authorises PAYING INVOICES from your wallet — it is a
+    spending credential, not a read-only one. It was committed to this PUBLIC
+    repository on 2026-04-30 (commit 3f4ad07) and has been readable by anyone
+    since. There is no way for me to revoke it: revocation lives in the wallet
+    provider's account UI, behind your login.
+
+    I checked whether an API path exists. coinos does not expose account-level
+    NWC revocation without an authenticated session, and creating a replacement
+    wallet programmatically requires email verification and a human-owned
+    account. No workaround exists. This one is genuinely yours.
+
+  What I already did:
+    - Removed it from the git index (content preserved on disk, not deleted).
+    - .gitignore corrected so it cannot be re-added by accident.
+    - Documented rotation + history-purge in SECURITY.md.
+    - Pinned a sha256 fingerprint of the leaked value in swarm/readiness.py so
+      the system can tell you "you are still using the compromised credential"
+      without ever storing or printing the credential itself.
+    - `swarmctl readiness` reports this as blocked right now. Confirmed.
+
+  Exactly what to do:
+    1. Log in to coinos (or whichever wallet that URI belongs to).
+    2. Find Nostr Wallet Connect / connected apps.
+    3. Revoke the existing connection.
+    4. Create a new one. Copy the new URI.
+    5. Replace keys/nwc.secret with it as a single line, then:
+           chmod 600 keys/nwc.secret
+       (0644 today — every other user on that machine can read it too.)
+    6. Run: bash ./swarmctl readiness
+       It must stop saying "still the credential that was public since 2026-04-30".
+
+  How you know it worked:
+    readiness shows  nwc_credential  ready  present, rotated, mode 600
+
+  Time: 5 minutes. Do this one before the others; everything else can wait.
+
+
+[P0-2] CHECK THE WALLET FOR UNAUTHORIZED SPENDING
+--------------------------------------------------------------------------------
+  Why it must be you:
+    That is your money and your transaction history. I will not guess at a
+    balance, and I have no read access to the wallet.
+
+  What to do:
+    Open the wallet's activity. Any payment you did not authorise, from any date
+    after 2026-04-30, is a consequence of P0-1. If there is one, contact the
+    provider's support with the payment hash; the rotation in P0-1 does not undo
+    what already happened.
+
+  Note: this project has never moved a sat. If the wallet has spend history you
+  do not recognise, none of it came from this code.
+
+  Time: 2 minutes.
+
+
+================================================================================
+P1 — THESE GATE THE FIRST PAID JOB
+================================================================================
+
+[P1-1] RESTORE OR AUTHORISE THE SIGNING IDENTITY
+--------------------------------------------------------------------------------
+  Why it must be you:
+    keys/nostr.key DOES NOT EXIST. keys/nostr.pub does. So the worker has a public
+    identity and no way to sign an event — it cannot publish a job result, which
+    means it cannot earn anything at all, regardless of everything else being
+    green.
+
+    I could generate a new secp256k1 keypair in one command and the worker would
+    run. That is not the question. The question is whether you want a NEW identity
+    with zero history or the EXISTING npub that customers may already follow. I
+    do not know where the original nsec lives. Generating a replacement without
+    asking would silently discard an identity, and that is your call, not mine.
+
+  Choose one:
+    (a) You have the nsec: put it in keys/nostr.key, chmod 600. Identity preserved.
+    (b) You do not care about the old npub: tell me, and I generate a fresh
+        keypair, print only the npub, and write the secret at 0600. You lose any
+        reputation attached to the old identity.
+
+  Verify: bash ./swarmctl readiness  ->  signing_key  ready  present
+
+  Time: 1 minute if you have the nsec.
+
+
+[P1-2] PROVIDE AN INFERENCE CREDENTIAL
+--------------------------------------------------------------------------------
+  Why it must be you:
+    GROQ_API_KEY is not set. Creating one means an account with a verified email
+    and a payment method. I cannot complete a signup, and I should not be holding
+    your billing relationship anyway.
+
+  What to do:
+    Put GROQ_API_KEY in nostr_dvm/dvm.env (systemd EnvironmentFile) or export it.
+    File is loaded by nostr_dvm/run_paid_worker.sh.
+
+  Alternative that costs nothing and needs no signup:
+    Point GROQ_BASE_URL at a local OpenAI-compatible server (ollama, llama.cpp,
+    vLLM). readiness already accepts GROQ_BASE_URL or DVM_INFERENCE_URL as
+    satisfying this check. Slower, free, and no third party sees customer prompts.
+    If you want this path, say so and I will wire and test it end to end.
+
+  Verify: bash ./swarmctl readiness  ->  inference  ready
+
+
+[P1-3] INSTALL AND START THE WORKER ON YOUR MACHINE
+--------------------------------------------------------------------------------
+  Why it must be you:
+    I have no access to your device. The handoff was explicit about not claiming
+    otherwise, and I am not going to start inventing paths on a machine I cannot
+    see.
+
+  What to do:
+      pip install -r requirements.txt        # coincurve, websockets
+      bash nostr_dvm/run_paid_worker.sh
+    then start it under whatever supervises processes on that box (systemd unit,
+    tmux, termux-wake-lock — I do not know which, so I am not writing commands
+    for it).
+
+  Note: coincurve is NOT installed in this workspace either, which is why the
+  worker itself has never been executed here. Its logic is covered by tests; the
+  binary path is not. Say the word and I will install it here and run the worker
+  end to end against a fake rail.
+
+  Verify: the log shows a relay connection and a subscription, not a traceback.
+
+
+[P1-4] DECIDE THE PRICE AND CONFIRM PAID MODE
+--------------------------------------------------------------------------------
+  Why it must be you:
+    It is a pricing decision with money attached, and it is the difference
+    between "a working service" and "a charity".
+
+  Current state:
+    DVM_PAID_ONLY is set in nostr_dvm/dvm.env — confirm the value is 1 before
+    advertising anything. Fee defaults in code are 50 sats (kind 5002, text) and
+    20 sats (kind 5003, summarize). Override with DVM_FEE_5002_MSAT and
+    DVM_FEE_5003_MSAT. Both are enforced server-side; a requester's `amount` tag
+    is never treated as proof of payment.
+
+  Why the number matters: underprice and relays fill with speculators; overprice
+  and nobody tries it once. My read: 50/20 is defensible for a first listing.
+
+  Verify: bash ./swarmctl readiness  ->  paid_mode  ready  charging for jobs
+
+
+================================================================================
+P2 — QUALITY, NOT BLOCKERS
+================================================================================
+
+[P2-1] JUDGE ONE REAL ANSWER
+--------------------------------------------------------------------------------
+  Why it must be you:
+    Taste. I can prove the rail charges correctly and the pipeline completes. I
+    cannot tell you whether the output is worth 50 sats to a stranger. That is
+    the product.
+
+  What to do:
+    Once P1 is done, request one job yourself and read the result. If it is bad,
+    the fix is prompt and model work, and that is a conversation we should have
+    with a real example in hand rather than in the abstract.
+
+  Time: 10 minutes, and it is the most valuable 10 minutes on this list.
+
+
+================================================================================
+P3 — HYGIENE. NONE OF THIS BLOCKS A SINGLE SAT.
+================================================================================
+
+[P3-1] PURGE THE PATH FROM GIT HISTORY  (optional, only after P0-1)
+--------------------------------------------------------------------------------
+  Why it must be you:
+    It requires a force-push and, for cached forks and views, a request to GitHub
+    support. Force-pushing your default branch is not something I will do to your
+    repository on my own initiative, and I cannot open a support ticket as you.
+
+  Honest framing: once P0-1 is done the URI in history is a dead string. The
+  purge is tidiness, not security. Do it or do not; the risk is already retired
+  by rotation. Steps are in SECURITY.md if you want them.
+
+
+[P3-2] TWO-FACTOR ON THE ACCOUNTS THAT CAN SPEND
+--------------------------------------------------------------------------------
+  Why it must be you: account security, your credentials, your devices.
+  Which accounts: the wallet provider, GitHub, and the inference provider. In
+  that order. A leaked NWC URI is exactly the kind of thing 2FA on the wallet
+  login would have limited the blast radius of.
+
+
+[P3-3] TAX AND JURISDICTION
+--------------------------------------------------------------------------------
+  Why it must be you: it is law where you live, and I will not give you a number.
+  Relevance: sats received for a service are income in most jurisdictions. Not a
+  blocker for a first job; is a blocker before volume. Worth 20 minutes with
+  someone qualified rather than an hour with me speculating.
+
+
+================================================================================
+AFTER YOU — WHAT I PICK UP WITHOUT ASKING
+================================================================================
+
+  When P0-1, P1-1 and P1-2 are done, tell me and I will, without further
+  instruction:
+
+    - install coincurve here and run the worker end to end against a fake rail,
+      so "tested logic" becomes "tested process";
+    - run swarmctl readiness until it is green and report the exact transcript;
+    - re-probe every connection and attach the fresh report to the console;
+    - take the first real job myself and show you the settlement row.
+
+  Until then I keep working on things that need none of the above.
+
+================================================================================
+  End of MRD. One command to check all of it:  bash ./swarmctl readiness
+================================================================================

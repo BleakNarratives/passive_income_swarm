@@ -1,0 +1,9 @@
+# Runtime dependencies for the paid rail only.
+#
+# The swarm control plane, console, connections layer and every test in this
+# repo are standard library; nothing here is needed to run `bash ./run_tests.sh`
+# or `swarmctl doctor`. These two are needed by nostr_dvm/dvm_worker.py to sign
+# events and hold a relay connection.
+
+coincurve>=18.0.0
+websockets>=12.0

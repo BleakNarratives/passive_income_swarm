@@ -26,12 +26,30 @@ pheromones + the ledger's yield events), and ``adaptive_memory.json`` is read
 *if present* with the documented shape below. Wire :meth:`GraftGuard.execute`
 into HC's deprecate/archive path — that is the one integration point.
 
-``adaptive_memory.json`` shape (optional):
+``adaptive_memory.json`` has two shapes in the wild, and this reader accepts
+both. Reading only one of them is not a cosmetic bug: against the other it
+reports zero signal for every module, so the guard would cheerfully allow a
+graft that throws the loser's pheromones away — the exact failure the guard
+exists to prevent.
+
+Shape A, the documented one (as originally specified):
 
     {"modules": {"<module>": {"pheromone_density": 0.0,
                               "incentives": 0.0,
                               "revenue_msat": 0.0,
                               "runs": 0}}}
+
+Shape B, what ``core_framework/shared/adaptive_memory.py`` actually writes:
+
+    {"version": 1, "half_life_seconds": 604800.0, "exploration_rate": 0.1,
+     "records": {"sec::debt covenant": {"data_source": "sec",
+                                        "query_pattern": "debt covenant",
+                                        "pheromone": 3.2, "runs": 9, ...}}}
+
+In shape B the module identity is ``data_source``; one source owns many query
+records, so density is the source's strongest trail and runs are summed. That
+file carries no incentive or revenue data, so those stay zero rather than being
+invented from an unrelated field.
 """
 
 from __future__ import annotations
@@ -54,6 +72,42 @@ class GraftBlocked(RuntimeError):
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _records_by_source(records: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Collapse core_framework's per-query ``records`` into per-source modules.
+
+    One ``data_source`` owns many ``source::query`` records, so its density is
+    the strongest trail among them and its run count is the sum. The file
+    carries no incentive or revenue data; those stay zero rather than being
+    fabricated from an unrelated field.
+    """
+    sources: Dict[str, Dict[str, Any]] = {}
+    if not isinstance(records, dict):
+        return sources
+    for key, rec in records.items():
+        if not isinstance(rec, dict):
+            continue
+        source = str(rec.get("data_source") or "").strip()
+        if not source:
+            source = str(key).split("::", 1)[0].strip()
+        if not source:
+            continue
+        slot = sources.setdefault(
+            source,
+            {"pheromone_density": 0.0, "incentives": 0.0, "revenue_msat": 0.0, "runs": 0},
+        )
+        try:
+            pheromone = float(rec.get("pheromone") or 0.0)
+        except (TypeError, ValueError):
+            pheromone = 0.0
+        try:
+            runs = int(rec.get("runs") or 0)
+        except (TypeError, ValueError):
+            runs = 0
+        slot["pheromone_density"] = round(max(slot["pheromone_density"], pheromone), 4)
+        slot["runs"] += runs
+    return sources
 
 
 @dataclass
@@ -126,8 +180,15 @@ class GraftGuard:
             raw = json.loads(self.adaptive_memory_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
-        modules = raw.get("modules") if isinstance(raw, dict) else None
-        return dict(modules or {})
+        if not isinstance(raw, dict):
+            return {}
+        modules = raw.get("modules")
+        if isinstance(modules, dict) and modules:
+            return {str(k): dict(v) for k, v in modules.items() if isinstance(v, dict)}
+        records = raw.get("records")
+        if isinstance(records, dict) and records:
+            return _records_by_source(records)
+        return {}
 
     # -- inspection --------------------------------------------------------
     def inspect(self, module: str, record: bool = True) -> ModuleSignal:

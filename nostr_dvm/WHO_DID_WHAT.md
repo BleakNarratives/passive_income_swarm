@@ -103,3 +103,47 @@
   Deliberately left OFF — revenue switch is the operator's call.
 - Dropped relay.nostr.band (dead handshake loop since deploy). 3 relays,
   zero retries post-restart.
+
+## 2026-11-08 — Buffy — Paid path rebuilt as a job-bound settlement ledger
+
+Audited the paid path against `HANDOFF_TO_NEXT_AGENT.md`. The earlier guard was
+not production-safe: it monkey-patched the worker and used a **global
+settlement-credit counter**, so one settled invoice could fund any waiting job
+and a restart forgot that a customer had paid. Two more defects sat in the
+worker itself: an `amount` tag counted as payment, and a payment-rail exception
+fell through into inference.
+
+Replaced all of it.
+
+- `settlement.py` (new) — WAL SQLite ledger. One invoice per job id; BOLT11
+  payment hash decoded locally (bech32, tag 1) and made unique so an invoice
+  cannot be re-bound to a second job; `claim()` is `BEGIN IMMEDIATE` and
+  single-use; served output cached for idempotent replay; `integrity()` runs the
+  invariants as SQL; preimages masked on export.
+- `paid_flow.py` (new) — the state machine, with no third-party imports and an
+  injectable clock/sleep so every branch is deterministic in tests. Rail
+  exceptions end the job as `payment_rail_error`; there is no serve-anyway path.
+- `dvm_worker.py` — paid mode delegates to `paid_flow`; `amount` tags are logged
+  as `claimed_amount_msat` only; free mode no longer reports anything as paid;
+  boot fails closed when `DVM_PAID_ONLY=1` and the rail is unavailable.
+- `paid_mode_guard.py` — reduced to preflight-then-run. No monkey-patching; it
+  refuses to start without rail, inference key and a writable ledger.
+- Tests: `tests/test_settlement.py` (24) and `tests/test_paid_flow.py` (17) cover
+  unpaid rejection, rail failure at invoice and at verify time, settled payment
+  for the matching job, cross-job replay, duplicate delivery, concurrent claim,
+  restart mid-job, reconnect with settled-but-unserved money, inference failure
+  then retry, payload tampering. Suite is 220 tests, all passing.
+
+Also: found `keys/nwc.secret` tracked in this **public** repo since 2026-04-30
+(a live `nostr+walletconnect://` secret), removed it from the index, added
+`SECURITY.md` with rotation and history-purge steps. Untracked `logs/jobs.jsonl`
+and committed `.pyc` files.
+
+Built `dashboard/` — stdlib HTTP + SSE operator console: money funnel with
+counted drop-off, invoice wall with countdown rings, daily-settled chart with a
+backtested projection, 6 × 6 cabinet, job stream, pheromone trails, and an
+integrity panel that verifies the invariants against the live ledger. Read-only
+unless `DASHBOARD_TOKEN` is set.
+
+NOT verified in that workspace: no relay, no signing, no Groq, no wallet contact
+— `coincurve` and `websockets` were absent, so the worker itself was not run.

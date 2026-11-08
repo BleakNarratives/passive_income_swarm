@@ -5,9 +5,19 @@ keys/nwc.secret
 __pycache__/
 *.pyc
 
+# Runtime state — never tracked. Secrets and ledgers belong to the machine
+# that runs them, not to the repository. Note that adding a path here does NOT
+# untrack a file that was already committed; use `git rm --cached` for that.
+nostr_dvm/logs/settlements.db
+nostr_dvm/logs/settlements.db-*
+nostr_dvm/logs/settlements_export.jsonl
+nostr_dvm/logs/jobs.jsonl
+nostr_dvm/dvm.env
+
 # Swarm control plane — generated runtime state (not source)
 logs/swarm.jsonl
 logs/swarm.jsonl.*.bak
+logs/connections.json
 logs/supervisor_state.json
 skills/registry.json
 data/models/
@@ -17,3 +27,7 @@ bus.jsonl
 bus.jsonl.*.bak
 circuit_breaker.json
 SCOUT_REGISTRY.json
+
+# seeded demo console data (synthetic, never real)
+nostr_dvm/logs/*.demo.db
+nostr_dvm/logs/*.demo.jsonl

@@ -142,14 +142,53 @@ scout — one `record_clean_run` call at the point the process returns 0.
 
 ---
 
-## Reconciliation checklist
+## Reconciliation checklist — resolved against the real framework
 
-1. `humane_cannibal.py` → call `GraftGuard.execute` in the deprecate/archive path.
-2. `adaptive_memory.json` → confirm the `modules` shape, or point `inspect()` at
-   the SQLite ledger.
-3. `domino.sh preflight` → call `IngestBreaker.preflight_pass` on success.
-4. `SCOUT_REGISTRY.json` → confirm the path; call `record_clean_run` on clean exit.
-5. Re-run `bash ./run_tests.sh` — 179 tests, all stdlib.
+This checklist was written before `core_framework` was readable. It has now been
+read (`BleakNarratives/core_framework@main`, shallow clone), and two of its five
+items name files that do not exist. `swarm/hooks.py` records the mapping as data
+and probes it, so none of this is a guess:
+
+```bash
+bash ./swarmctl hooks --core-root /path/to/core_framework
+bash ./swarmctl hooks --core-root /path/to/core_framework --json --strict
+```
+
+| Hook | Real target | State |
+|---|---|---|
+| `graft_guard` | *none* — `humane_cannibal.py` was never written | no target |
+| `adaptive_memory` | `shared/adaptive_memory.py` | **wired** |
+| `domino_preflight` | `bin/domino.sh` | action required |
+| `scout_registry` | *none* — `SCOUT_REGISTRY.json` does not exist | no target |
+| `tests` | `bash ./run_tests.sh` | action required |
+
+### What was actually broken
+
+`adaptive_memory.json` is not `{"modules": {...}}`. `core_framework` writes:
+
+```json
+{"version": 1, "half_life_seconds": 604800.0, "exploration_rate": 0.1,
+ "records": {"sec::debt covenant": {"data_source": "sec",
+                                    "pheromone": 2.5, "runs": 4}}}
+```
+
+`GraftGuard._adaptive()` read only `modules`, so against the real file it saw
+**zero signal for every module** — the anti-lobotomy guard would have approved a
+graft that discarded the loser's pheromones, which is the precise failure it
+exists to prevent. It now reads both shapes: module identity from `data_source`,
+density as that source's strongest trail, runs summed. `tests/test_hooks.py` pins
+both shapes and the merge decision that follows from the real one.
+
+### The two that cannot be wired from here
+
+`bootstrap/cannibal_context.py` is a session bootstrap, not a deprecate/archive
+path: there is nowhere to call `GraftGuard.execute`, and inventing one inside a
+login banner would be worse than leaving it unwired. `SCOUT_REGISTRY.json` has no
+counterpart at all — `core_framework`'s registry is `shared/kernel_bus.py`, a
+description of bus roles, not a digest registry of executed scripts.
+
+Both wait on a caller that does not exist yet. `swarmctl hooks` reports them as
+`no_target` rather than pretending they are integrated.
 
 ### Runnable reconciliation (whorl.py + lineage.py)
 

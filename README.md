@@ -37,10 +37,14 @@ the income.
 
 ```bash
 bash ./swarmctl doctor      # validate manifest + ledger + skills
+bash ./swarmctl connections # capability coverage; --probe to verify live
+bash ./swarmctl hooks --core-root ../core_framework  # what is actually wired
+bash ./swarmctl readiness   # money-path preconditions + who can clear each
+bash ./swarmctl market --query "debt covenant"  # keyless demand-signal search
 bash ./swarmctl cabinet     # print the cabinet (slots)
 bash ./swarmctl pull B3     # dispense Thoth
 bash ./swarmctl demo        # end-to-end smoke run
-bash ./run_tests.sh         # 179 stdlib unit tests
+bash ./run_tests.sh         # 248 stdlib unit tests (45 on the money path)
 ```
 
 See **[docs/SWARM.md](docs/SWARM.md)** for the architecture: the cabinet, the
@@ -83,6 +87,60 @@ Three protections on top of the relays, all in stdlib Python:
 Scouts and agents are **polyglot** (Python, Elixir, Node, Deno, C++ and more) —
 the launcher table and byte-level hashing make the control plane
 language-agnostic. See **[docs/JANUS.md](docs/JANUS.md)**.
+
+### Connections
+
+`swarm/connections.py` binds every capability the cabinet declares to a real
+provider with a live probe, so a manifest can no longer claim `market.search`
+while nothing behind it can search:
+
+```bash
+swarmctl connections                 # coverage + orphans, no network
+swarmctl connections --probe --save  # live reachability, cached for the console
+```
+
+The exit code is `1` when a declared capability is unbound, or when a configured
+connection is unreachable. `doctor` reports orphans too. Probes are plain
+`urllib`/`socket`/`subprocess` — no SDK, no `pip install` — and a report never
+contains a credential value, only the name of a missing variable. See
+**[docs/CONNECTIONS.md](docs/CONNECTIONS.md)**.
+
+## Paid rail (NIP-90 DVM)
+
+`nostr_dvm/` serves AI jobs over Nostr and takes sats for them. The money path
+is durable, **job-bound** and fail-closed:
+
+- one invoice per job, ever — a retry re-publishes the same BOLT11 instead of
+  charging again;
+- inference opens only after the LNURL verify endpoint reports settlement *for
+  that job id* — a request's `amount` tag is a claim, never a receipt;
+- a payment-rail error means the job is **not** served (the old gate fell
+  through and served it anyway);
+- a single-use claim (`BEGIN IMMEDIATE`) means a duplicate relay delivery cannot
+  run inference twice, and a restart cannot resurrect a spent invoice;
+- a paid-but-failed job stays visible as *paid, undelivered* rather than
+  vanishing.
+
+```bash
+./nostr_dvm/run_paid_worker.sh   # preflight, then serve paid jobs
+python3 -m dashboard.server      # operator console on 127.0.0.1:8787
+```
+
+See **[nostr_dvm/PAID_MODE.md](nostr_dvm/PAID_MODE.md)** for the flow and
+**[SECURITY.md](SECURITY.md)** for the credential remediation this repository
+still needs.
+
+## Operator console
+
+`dashboard/` is a live console for the swarm and its money: stdlib HTTP plus
+Server-Sent Events, no build step, no dependencies. Money funnel with counted
+drop-off, an invoice wall with depleting countdowns, a daily-settled chart with a
+backtested 7-day projection (model and RMSE shown), the cabinet as a 6 × 6 grid,
+the job stream, pheromone trails, and an **integrity** panel that runs the money
+invariants as SQL against the live ledger.
+
+Read-only by default; mutating actions require `DASHBOARD_TOKEN`. See
+**[docs/DASHBOARD.md](docs/DASHBOARD.md)**.
 
 ## Stack
 

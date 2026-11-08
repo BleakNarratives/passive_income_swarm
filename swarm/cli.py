@@ -32,9 +32,17 @@ from .scouts import ScoutEngine
 from .skills import MasteryGate, Skill, SkillStore
 from .supervisor import Supervisor
 from .breaker import IngestBreaker
+from .connections import build_connections, format_report
 from .contracts import Envelope, PayloadError, parse as parse_envelope
 from .discovery import ScoutRegistry
 from .graft import GraftGuard
+from .hooks import probe as probe_hooks, summary as hook_summary, to_json as hooks_json
+from .market_search import SOURCES as MARKET_SOURCES, search as market_search_report
+from .readiness import (
+    format_report as readiness_text,
+    readiness as run_readiness,
+    to_json as readiness_json,
+)
 from .incentives import ScoutIncentives
 from .ingest import Ingestor
 from .lineage import (
@@ -109,6 +117,9 @@ class Context:
         self.models = ModelRegistry(root / "data" / "models" / "registry.json")
         self.machine = VendingMachine(self.registry, self.ledger, root=root)
         self.engine = PredictiveEngine(ledger=self.ledger, registry=self.models)
+        # Capability -> provider bindings. Offline to build; only a --probe run
+        # touches the network.
+        self.connections = build_connections(root)
 
         # Relay 2 — one bus for telemetry and pheromones (path overridable so the
         # ingestor can be pointed at core_framework's real bus.jsonl).
@@ -353,21 +364,53 @@ def cmd_supervise(ctx: Context, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_connections(ctx: Context, args: argparse.Namespace) -> int:
+    report = ctx.connections.report(
+        ctx.registry, probe=getattr(args, "probe", False), timeout=getattr(args, "timeout", 8.0)
+    )
+    if getattr(args, "save", False):
+        path = ctx.connections.save(report, ctx.root / "logs" / "connections.json")
+        report["saved_to"] = str(path)
+    if getattr(args, "json", False):
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(format_report(report))
+        if report.get("saved_to"):
+            print(f"\ncached for the console: {report['saved_to']}")
+    # A declared-but-unserved capability is a defect, not a warning. So is a
+    # probed connection that is configured and unreachable.
+    broken = bool(report["orphans"]) or any(
+        row["status"] == "unreachable" for row in report["connections"]
+    )
+    return 1 if broken and not getattr(args, "allow_degraded", False) else 0
+
+
 def cmd_doctor(ctx: Context, args: argparse.Namespace) -> int:
     problems = ctx.registry.problems()
+    audit = ctx.connections.audit(ctx.registry)
     print(f"manifest : {ctx.registry.source or '(default)'}")
     print(f"occupants: {len(ctx.registry)}  capabilities: {len(ctx.registry.capabilities)}")
     print(f"ledger   : {ctx.ledger.path}  events={ctx.ledger.count()}")
     print(f"skills   : {len(ctx.skills.all())}")
+    print(
+        f"links    : {len(ctx.connections)} connections, "
+        f"{len(audit['orphans'])} unbound capabilities "
+        "(`swarmctl connections --probe` to verify live)"
+    )
     if problems:
         print("\n✗ registry problems:")
         for p in problems:
             print(f"  - {p}")
     else:
         print("\n✓ registry valid")
+    if audit["orphans"]:
+        print("\n✗ unbound capabilities:")
+        for orphan in audit["orphans"]:
+            owners = ", ".join(orphan["declared_by"]) or "catalog only"
+            print(f"  - {orphan['capability']} (declared by {owners})")
     if not ctx.skills.all():
         print("! skill store empty — run `swarmctl skills seed`")
-    return 1 if problems else 0
+    return 1 if (problems or audit["orphans"]) else 0
 
 
 def cmd_demo(ctx: Context, args: argparse.Namespace) -> int:
@@ -659,6 +702,22 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("doctor", help="validate the installation")
     p.set_defaults(func=cmd_doctor)
 
+    p = sub.add_parser(
+        "connections", help="capability connections: coverage, orphans, live probes"
+    )
+    p.add_argument("--probe", action="store_true", help="make real network calls")
+    p.add_argument("--json", action="store_true", help="emit the full report as JSON")
+    p.add_argument(
+        "--save", action="store_true", help="cache the report to logs/connections.json"
+    )
+    p.add_argument("--timeout", type=float, default=8.0, help="per-probe timeout in seconds")
+    p.add_argument(
+        "--allow-degraded",
+        action="store_true",
+        help="exit 0 even when a capability is unbound or unreachable",
+    )
+    p.set_defaults(func=cmd_connections)
+
     p = sub.add_parser("demo", help="end-to-end smoke run")
     p.set_defaults(func=cmd_demo)
 
@@ -719,7 +778,92 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--expected-bus-path", default=None)
     p.set_defaults(func=cmd_reconcile)
 
+    p = sub.add_parser("hooks", help="core_framework reconciliation hooks: what is actually wired")
+    p.add_argument("--core-root", default=None, help="path to a core_framework checkout")
+    p.add_argument("--json", action="store_true", help="emit the report as JSON")
+    p.add_argument("--strict", action="store_true", help="exit 1 when a hook still needs action")
+    p.set_defaults(func=cmd_hooks)
+
+    p = sub.add_parser("market", help="keyless demand-signal search (Hacker News + SEC EDGAR)")
+    p.add_argument("--query", required=True)
+    p.add_argument("--source", action="append", choices=list(MARKET_SOURCES), default=None)
+    p.add_argument("--limit", type=int, default=5)
+    p.add_argument("--timeout", type=float, default=8.0)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_market)
+
+    p = sub.add_parser("readiness", help="what stands between this checkout and a paid job")
+    p.add_argument("--root", default=".")
+    p.add_argument("--fast", action="store_true", help="skip the network checks")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_readiness)
+
     return parser
+
+
+def cmd_hooks(ctx: Context, args: argparse.Namespace) -> int:
+    """Report which core_framework reconciliation hooks are actually wired.
+
+    Read-only: it looks for marker strings in a checkout and never imports or
+    executes anything from another repository.
+    """
+    reports = probe_hooks(args.core_root)
+    counts = hook_summary(reports)
+    if args.json:
+        print(hooks_json(reports, args.core_root))
+    else:
+        print(
+            f"{len(reports)} hooks · {counts.get('wired', 0)} wired · "
+            f"{counts.get('action_required', 0)} action required · "
+            f"{counts.get('no_target', 0)} no target"
+        )
+        print()
+        print(f"{'STATE':<16} {'HOOK':<17} TARGET")
+        for report in reports:
+            mark = "!" if report.state == "action_required" else ""
+            print(f"{report.state:<16} {report.hook:<17} {report.target or '-'} {mark}".rstrip())
+            if report.evidence:
+                print(f"{'':<16}   {report.evidence}")
+            if report.command:
+                print(f"{'':<16}   run: {report.command}")
+        print()
+        print("no_target means the file the directive named does not exist in")
+        print("core_framework. See docs/JANUS.md §Reconciliation for the mapping.")
+    if args.strict and counts.get("action_required"):
+        return 1
+    return 0
+
+
+def cmd_market(ctx: Context, args: argparse.Namespace) -> int:
+    """Search public demand-signal sources that need no credential."""
+    sources = tuple(args.source or MARKET_SOURCES)
+    report = market_search_report(
+        args.query, sources=sources, limit=args.limit, timeout=args.timeout
+    )
+    if args.json:
+        payload = dict(report)
+        payload["hits"] = [hit.to_dict() for hit in report["hits"]]
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f'"{report["query"]}" · {len(report["hits"])} hit(s)')
+        for name, state in report["sources"].items():
+            mark = "ok" if state["ok"] else "failed"
+            detail = state["error"] or f'{state["count"]} result(s)'
+            print(f"  {name:<12}{mark:<8}{detail}")
+        if report["hits"]:
+            print()
+        for hit in report["hits"]:
+            print(f"  [{hit.source}] {hit.title}")
+            if hit.url:
+                print(f"      {hit.url}")
+    return 0 if any(state["ok"] for state in report["sources"].values()) else 1
+
+
+def cmd_readiness(ctx: Context, args: argparse.Namespace) -> int:
+    """Report every money-path precondition and who can clear it."""
+    report = run_readiness(args.root, probe_network=not args.fast)
+    print(readiness_json(report) if args.json else readiness_text(report))
+    return 0 if report["ready"] else 1
 
 
 def main(argv: Optional[List[str]] = None) -> int:

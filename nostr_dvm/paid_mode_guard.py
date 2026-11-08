@@ -1,89 +1,110 @@
 #!/usr/bin/env python3
-"""Fail-closed launcher guard for the existing NIP-90 worker.
-
-The upstream worker currently trusts an incoming `amount` tag as proof of
-payment, and can continue if invoice creation/checking raises. This wrapper
-forces every request through its LNURL invoice flow and permits inference only
-after the configured rail reports settlement. It does not create demand or
-guarantee earnings; it prevents unpaid jobs from consuming inference.
 """
+paid_mode_guard.py — fail-closed launcher for the NIP-90 worker
+===============================================================
+
+DNA_TAG: ORIGIN=BleakNarratives/passive_income_swarm | PILLAR=nostr_dvm
+
+WHAT CHANGED AND WHY
+--------------------
+An earlier version of this file monkey-patched the running worker: it zeroed
+``extract_amount_msat``, forced ``PAID_ONLY``, and let a **global
+settlement-credit counter** unlock inference. That was wrong in a way that
+matters with real money:
+
+* the credit was not bound to a job, so settling a 20-sat summarization could
+  unlock a 50-sat generation;
+* the counter lived in memory, so a restart forgot the customer had paid;
+* patching a live module from outside its own call path is untestable and
+  invisible to the code it is supposed to protect.
+
+The paid path now lives where it belongs — ``paid_flow.serve_paid_job`` over
+``settlement.SettlementLedger`` — and enforces job binding, single-use claims
+and idempotent replay in the worker itself. This module is therefore reduced to
+what a launcher should be: **preflight, then run**. If the preflight cannot
+prove the rail and the inference credentials are present, it refuses to start
+rather than serving work it cannot bill.
+"""
+
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
-import threading
+
+__all__ = ["preflight", "main", "PreflightError"]
+
+REQUIRED_ENV = {
+    # Paid mode is not optional when launched through this file.
+    "DVM_PAID_ONLY": "1",
+}
 
 
-class SettlementCredits:
-    """Thread-safe count of independently verified invoice settlements."""
-
-    def __init__(self) -> None:
-        self._count = 0
-        self._lock = threading.Lock()
-
-    def add(self) -> None:
-        with self._lock:
-            self._count += 1
-
-    def consume(self) -> bool:
-        with self._lock:
-            if self._count < 1:
-                return False
-            self._count -= 1
-            return True
+class PreflightError(RuntimeError):
+    """Raised when the worker cannot be started without risking unpaid work."""
 
 
-def install_guard(worker) -> SettlementCredits:
-    """Patch the existing worker in-process; no changes to its job protocol."""
-    if not getattr(worker, "_PAYMENT_RAIL", None):
-        raise RuntimeError("LNURL payment rail did not initialize; refusing to serve")
+def preflight(worker) -> dict:
+    """Verify the worker can bill before it is allowed to serve.
+
+    Returns a small report (useful in logs and in the dashboard). Raises
+    :class:`PreflightError` — never returns a "probably fine" verdict.
+    """
+    problems = []
+
+    if not getattr(worker, "PAID_ONLY", False):
+        problems.append("DVM_PAID_ONLY is not enabled in the worker module")
+    if getattr(worker, "_PAYMENT_RAIL", None) is None:
+        problems.append(
+            "LNURL payment rail did not initialise — refusing to serve unbillable jobs"
+        )
     if not getattr(worker, "GROQ_KEY", None):
-        raise RuntimeError("GROQ_API_KEY is missing; refusing to start")
+        problems.append("GROQ_API_KEY is missing — inference would fail after payment")
 
-    credits = SettlementCredits()
-    rail = worker._PAYMENT_RAIL
-    original_check = rail.check_settled
+    ledger_factory = getattr(worker, "settlement_ledger", None)
+    if ledger_factory is None:
+        problems.append("worker does not expose settlement_ledger()")
+        ledger = None
+    else:
+        try:
+            ledger = ledger_factory()
+            ledger.counters()  # prove the store is writable, not just present
+        except Exception as exc:  # pragma: no cover - disk/permission failure
+            problems.append(f"settlement ledger unusable: {type(exc).__name__}: {exc}")
+            ledger = None
 
-    def checked_settlement(verify_url):
-        settled, preimage = original_check(verify_url)
-        if settled:
-            credits.add()
-        return settled, preimage
+    if problems:
+        raise PreflightError("; ".join(problems))
 
-    rail.check_settled = checked_settlement
-
-    # An untrusted NIP-90 amount tag is a claim, not a payment receipt.
-    worker.extract_amount_msat = lambda _event: 0
-    worker.PAID_ONLY = True
-
-    original_inference = worker.run_inference
-
-    def paid_inference(kind, content):
-        if not credits.consume():
-            raise PermissionError("No verified settlement credit; inference blocked")
-        return original_inference(kind, content)
-
-    worker.run_inference = paid_inference
-    return credits
+    return {
+        "paid_only": True,
+        "rail": True,
+        "groq_key": True,
+        "settlement_db": str(getattr(ledger, "path", "?")),
+    }
 
 
 def main() -> None:
-    # These are read by dvm_worker at import time. Do not allow env to disable
-    # the payment gate or permit multiple simultaneous invoice/inference paths.
-    os.environ["DVM_PAID_ONLY"] = "1"
-    os.environ["DVM_MAX_INFLIGHT"] = "1"
+    # The worker reads these at import time.
+    for key, value in REQUIRED_ENV.items():
+        os.environ[key] = value
+
     here = os.path.dirname(os.path.abspath(__file__))
     if here not in sys.path:
         sys.path.insert(0, here)
 
     try:
-        import dvm_worker as worker
-        install_guard(worker)
+        import dvm_worker as worker  # noqa: WPS433 (deliberate late import)
+        report = preflight(worker)
     except Exception as exc:
-        raise SystemExit(f"Paid worker preflight failed closed: {exc}") from exc
+        raise SystemExit(f"[PAID-GUARD] preflight failed closed: {exc}") from exc
 
-    print("[PAID-GUARD] enabled: amount tags ignored; inference requires verified settlement", flush=True)
+    print(
+        "[PAID-GUARD] preflight ok — job-bound settlement enforced "
+        f"(ledger={report['settlement_db']})",
+        flush=True,
+    )
+    import asyncio
+
     asyncio.run(worker.main())
 
 

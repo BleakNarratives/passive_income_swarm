@@ -2,30 +2,28 @@
 """
 dvm_worker.py — NIP-90 Data Vending Machine worker
 
-DNA_TAG: ORIGIN=BleakNarratives/passive_income_swarm | PILLAR=nostr_dvm | LAST_SYNC=2026-08-24
+DNA_TAG: ORIGIN=BleakNarratives/passive_income_swarm | PILLAR=nostr_dvm | LAST_SYNC=2026-11-08
 
 WHAT THIS IS:
   A live Nostr DVM (Data Vending Machine). Listens for NIP-90 job requests
   (kind 5002 text-generation, 5003 text-summarization) on public relays,
-  serves them via Groq inference (llama-3.3-70b-versatile, free tier),
-  signs results with BIP340 schnorr, publishes back to the relay network.
+  serves them via Groq inference, signs results with BIP340 schnorr, publishes
+  back to the relay network.
 
 REVENUE MODEL:
-  Requesters attach an "amount" tag (millisats) for paid jobs. Every served
-  job builds relay reputation; paid jobs are logged separately so earnings
-  are auditable from jobs.jsonl once a Lightning payout rail (NIP-47 NWC /
-  lightning address) is connected. Payment hooks are stubbed at
-  PAYMENT_GATE below — serving starts immediately, collection activates
-  when the wallet rail lands.
+  Two modes, one switch (DVM_PAID_ONLY):
 
-REPLACES:
-  bin/listener.py + bin/responder.py skeletons (Moto-era). Old responder
-  shelled out to Ollama — dead on this hardware — and never signed or
-  published events. This is the real thing.
+  * Reputation mode (default, DVM_PAID_ONLY=0) — serves jobs free to build relay
+    presence. Nothing is billed, and nothing is reported as paid.
+  * Paid mode (DVM_PAID_ONLY=1) — every job is invoiced over LNURL-pay and is
+    served only after the invoice's verify endpoint reports settlement *for
+    that job*. The money path lives in paid_flow.py over settlement.py, and it
+    is fail-closed: a rail error means the job is not served, and a request's
+    `amount` tag is never treated as proof of payment.
 
 RUN:
-  ~/passive_income_swarm-env/bin/python dvm_worker.py            # daemon
-  ... dvm_worker.py --once                                       # single poll cycle
+  ~/passive_income_swarm-env/bin/python paid_mode_guard.py    # paid mode (guarded)
+  ~/passive_income_swarm-env/bin/python dvm_worker.py         # reputation mode
 Service: systemctl --user {status,restart} dvm-worker
 """
 
@@ -42,6 +40,14 @@ from pathlib import Path
 import requests
 import websockets
 from coincurve import PrivateKey
+
+# Payment path — LNURL-pay rail plus the durable job-bound settlement gate.
+try:  # running as a script: this directory is on sys.path
+    from settlement import SettlementLedger
+    from paid_flow import serve_paid_job
+except ImportError:  # imported as a package (tests, dashboard)
+    from .settlement import SettlementLedger
+    from .paid_flow import serve_paid_job
 
 # Payment rail — LNURL-pay (lives alongside this file)
 try:
@@ -60,6 +66,7 @@ SWARM = HOME / "passive_income_swarm"
 DVM_DIR = SWARM / "nostr_dvm"
 KEY_FILE = SWARM / "keys" / "nostr.key"
 LOG_FILE = DVM_DIR / "logs" / "jobs.jsonl"
+SETTLEMENT_DB = DVM_DIR / "logs" / "settlements.db"
 
 RELAYS = [
     "wss://relay.primal.net",
@@ -86,6 +93,14 @@ RATE_SEMAPHORE = 1              # concurrent inference jobs
 PAID_ONLY = os.environ.get("DVM_PAID_ONLY", "0") == "1"   # reputation mode default
 PAYMENT_TIMEOUT = int(os.environ.get("DVM_PAYMENT_TIMEOUT", "120"))  # seconds to wait for sats
 PAYMENT_POLL = int(os.environ.get("DVM_PAYMENT_POLL", "3"))          # seconds between verify checks
+
+# Fee schedule in millisatoshis. Env-overridable so pricing is an operator
+# decision, not a code edit. A requester's own `amount` tag never influences it.
+PAID_FEES_MSAT = {
+    5002: int(os.environ.get("DVM_FEE_5002_MSAT", "50000")),   # 50 sats text-gen
+    5003: int(os.environ.get("DVM_FEE_5003_MSAT", "20000")),   # 20 sats summarize
+}
+PAID_FEE_DEFAULT_MSAT = int(os.environ.get("DVM_FEE_DEFAULT_MSAT", "50000"))
 
 # Inbound throttling (2026-08-26 — P0 close: a requester could previously
 # fire unlimited jobs, piling tasks onto the loop and draining the Groq free
@@ -123,8 +138,55 @@ PRIV = load_private_key()
 PUBKEY_XONLY = PRIV.public_key.format(compressed=False)[1:33].hex()
 GROQ_KEY = load_groq_key()
 
-SEEN = set()          # processed event ids (dedup across relays)
-SEEN_MAX = 4096
+class _SeenRing:
+    """Bounded FIFO of processed event ids.
+
+    The previous implementation cleared the whole set on overflow, which let the
+    oldest events be served a second time — a free-job coupon on a busy relay.
+    Evicting one id at a time keeps memory bounded without forgetting everything.
+    """
+
+    def __init__(self, capacity: int = 4096):
+        self.capacity = max(1, int(capacity))
+        self._order = deque()
+        self._ids = set()
+
+    def __contains__(self, item):
+        return item in self._ids
+
+    def add(self, item):
+        if item in self._ids:
+            return
+        self._ids.add(item)
+        self._order.append(item)
+        while len(self._order) > self.capacity:
+            self._ids.discard(self._order.popleft())
+
+    def __len__(self):
+        return len(self._ids)
+
+    def clear(self):
+        self._ids.clear()
+        self._order.clear()
+
+
+SEEN = _SeenRing(4096)   # processed event ids (dedup across relays)
+
+# Durable settlement ledger, opened lazily so importing this module (tests,
+# dashboards, `--help`) never creates runtime state.
+_SETTLEMENT_LOCK = threading.Lock()
+_SETTLEMENT_LEDGER = None
+
+
+def settlement_ledger():
+    """Return the process-wide settlement ledger, creating it on first use."""
+    global _SETTLEMENT_LEDGER
+    with _SETTLEMENT_LOCK:
+        if _SETTLEMENT_LEDGER is None:
+            _SETTLEMENT_LEDGER = SettlementLedger(
+                SETTLEMENT_DB, default_timeout_s=PAYMENT_TIMEOUT
+            )
+        return _SETTLEMENT_LEDGER
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +331,7 @@ def _release_slot(requester):
 # JOB HANDLING
 
 def extract_amount_msat(event):
+    """Read the requester's claimed amount. A CLAIM ONLY — never a receipt."""
     for tag in event.get("tags", []):
         if len(tag) >= 2 and tag[0] == "amount":
             try:
@@ -323,8 +386,10 @@ async def _handle_job_inner(ws, event, relay_name, kind, result_kind,
     except json.JSONDecodeError:
         content = event.get("content") or ""
 
-    amount = extract_amount_msat(event)
-    paid = amount > 0
+    # A requester-supplied `amount` tag is a CLAIM, not a receipt. It is logged
+    # for audit and never authorises service. Money may only be taken by
+    # paid_flow.serve_paid_job, on a verified settlement bound to this job id.
+    claimed_msat = extract_amount_msat(event)
 
     if not content.strip():
         return
@@ -337,69 +402,12 @@ async def _handle_job_inner(ws, event, relay_name, kind, result_kind,
                  "relay": relay_name, "outcome": "rejected_too_large"})
         return
 
-    # PAYMENT_GATE — LNURL-pay Lightning rail with settlement polling
-    # Hybrid: serve free jobs for reputation; gate + poll when DVM_PAID_ONLY=1.
-    # Fee schedule: text-gen 50 sats, summarize 20 sats.
-    # Flow: generate invoice → publish payment-required → poll verify → serve/expire.
-    if PAID_ONLY and not paid:
-        fee_msat = 50_000 if kind == 5002 else 20_000
-        if _PAYMENT_RAIL:
-            try:
-                inv = await asyncio.to_thread(
-                    _PAYMENT_RAIL.invoice, fee_msat,
-                    comment=f"DVM job {event_id[:12]}"
-                )
-                bolt11_content = json.dumps({
-                    "bolt11": inv.bolt11,
-                    "amount_msat": fee_msat,
-                })
-                fb = build_event(7000, [["e", event_id], ["p", requester],
-                                        ["status", "payment-required"],
-                                        ["amount", str(fee_msat)]], bolt11_content)
-                await publish(ws, fb, relay_name)
-                print(f"[GATE] invoice {inv.bolt11[:30]}... "
-                      f"({fee_msat/1000:.0f} sats) — awaiting payment...", flush=True)
-
-                # Poll for payment settlement
-                deadline = time.time() + PAYMENT_TIMEOUT
-                settled = False
-                preimage = None
-                while time.time() < deadline:
-                    settled, preimage = await asyncio.to_thread(
-                        _PAYMENT_RAIL.check_settled, inv.verify_url
-                    )
-                    if settled:
-                        break
-                    await asyncio.sleep(PAYMENT_POLL)
-
-                if not settled:
-                    # Timeout — job unpaid
-                    fb_timeout = build_event(7000, [["e", event_id], ["p", requester],
-                                                    ["status", "payment-timeout"],
-                                                    ["amount", str(fee_msat)]], "")
-                    await publish(ws, fb_timeout, relay_name)
-                    log_job({"ts": time.time(), "job_id": event_id, "kind": kind,
-                             "relay": relay_name, "amount_msat": fee_msat,
-                             "invoice": inv.bolt11[:40], "outcome": "payment_timeout"})
-                    return
-
-                # Paid! Preimage proof logged, continue to inference below
-                print(f"[GATE] PAID {fee_msat/1000:.0f} sats! preimage={preimage[:16] if preimage else 'N/A'}...", flush=True)
-                amount = fee_msat  # set amount for the job ledger
-                paid = True
-
-            except Exception as e:
-                print(f"[WARN] payment gate error: {e} — falling through to serve")
-                # If payment rail fails entirely, serve the job rather than lose it
-        else:
-            # Payment rail not loaded — static fallback
-            fb = build_event(7000, [["e", event_id], ["p", requester],
-                                    ["status", "payment-required"],
-                                    ["amount", str(50_000)]], "")
-            await publish(ws, fb, relay_name)
-            log_job({"ts": time.time(), "job_id": event_id, "kind": kind,
-                     "relay": relay_name, "amount_msat": amount, "outcome": "gate_unpaid"})
-            return
+    if PAID_ONLY:
+        # Every paid-mode job goes through the durable, job-bound gate. There is
+        # deliberately no fall-through: a rail error means the job is not served.
+        await _serve_paid(ws, event, relay_name, kind, result_kind,
+                          event_id, requester, content)
+        return
 
     # feedback: processing
     fb = build_event(7000, [["e", event_id], ["p", requester],
@@ -409,7 +417,7 @@ async def _handle_job_inner(ws, event, relay_name, kind, result_kind,
     started = time.time()
     try:
         output = await asyncio.to_thread(run_inference, kind, content)
-        outcome = "served_paid" if paid else "served_free"
+        outcome = "served_free"
     except Exception as e:
         output = ""
         outcome = f"inference_error: {type(e).__name__}"
@@ -417,8 +425,8 @@ async def _handle_job_inner(ws, event, relay_name, kind, result_kind,
     if output:
         tags = [["e", event_id], ["p", requester],
                 ["request", json.dumps(event, separators=(",", ":"))]]
-        if amount:
-            tags.append(["amount", str(amount)])
+        if claimed_msat:
+            tags.append(["amount", str(claimed_msat)])
         result = build_event(result_kind, tags, output)
         await publish(ws, result, relay_name)
 
@@ -429,14 +437,70 @@ async def _handle_job_inner(ws, event, relay_name, kind, result_kind,
         "result_kind": result_kind,
         "relay": relay_name,
         "requester": requester,
-        "amount_msat": amount,
+        "amount_msat": 0,               # nothing was collected in reputation mode
+        "claimed_amount_msat": claimed_msat,
         "input_chars": len(content),
         "output_chars": len(output),
         "latency_s": round(time.time() - started, 2),
         "outcome": outcome,
     })
-    print(f"[JOB] {event_id[:8]} kind={kind} {'PAID' if paid else 'free'} "
-          f"-> {outcome} ({round(time.time()-started,1)}s)")
+    print(f"[JOB] {event_id[:8]} kind={kind} free -> {outcome} "
+          f"({round(time.time()-started,1)}s)")
+
+
+async def _serve_paid(ws, event, relay_name, kind, result_kind,
+                      event_id, requester, content):
+    """Serve one paid-mode job through the job-bound settlement gate."""
+    fee_msat = PAID_FEES_MSAT.get(kind, PAID_FEE_DEFAULT_MSAT)
+    delivered = {"event": ""}
+
+    async def notify(status, body="", extra=()):
+        tags = [["e", event_id], ["p", requester], ["status", status]]
+        tags += [list(t) for t in extra]
+        await publish(ws, build_event(7000, tags, body), relay_name)
+
+    async def deliver(output):
+        tags = [["e", event_id], ["p", requester],
+                ["request", json.dumps(event, separators=(",", ":"))],
+                ["amount", str(fee_msat)]]
+        result = build_event(result_kind, tags, output)
+        delivered["event"] = result.get("id", "")
+        await publish(ws, result, relay_name)
+
+    started = time.time()
+    outcome = await serve_paid_job(
+        event=event,
+        kind=kind,
+        rail=_PAYMENT_RAIL,
+        ledger=settlement_ledger(),
+        infer=run_inference,
+        notify=notify,
+        deliver=deliver,
+        fee_msat=fee_msat,
+        timeout_s=PAYMENT_TIMEOUT,
+        poll_s=PAYMENT_POLL,
+    )
+
+    log_job({
+        "ts": time.time(),
+        "job_id": event_id,
+        "kind": kind,
+        "result_kind": result_kind,
+        "relay": relay_name,
+        "requester": requester,
+        "amount_msat": outcome.fee_msat if outcome.outcome == "served_paid" else 0,
+        "claimed_amount_msat": extract_amount_msat(event),
+        "fee_msat": fee_msat,
+        "preimage": (outcome.preimage or "")[:16],
+        "input_chars": len(content),
+        "output_chars": len(outcome.output),
+        "latency_s": round(time.time() - started, 2),
+        "outcome": outcome.outcome,
+        "detail": outcome.detail,
+        "result_event": delivered["event"],
+    })
+    print(f"[JOB] {event_id[:8]} kind={kind} PAID -> {outcome.outcome} "
+          f"({round(time.time()-started,1)}s) {outcome.detail}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -462,9 +526,7 @@ async def relay_loop(relay):
                         ev = data[2]
                         eid = ev.get("id", "")
                         if ev.get("kind") in JOB_KINDS and eid not in SEEN:
-                            SEEN.add(eid)
-                            if len(SEEN) > SEEN_MAX:
-                                SEEN.clear()
+                            SEEN.add(eid)  # bounded eviction, never a full wipe
                             asyncio.create_task(handle_job(ws, ev, relay))
                     elif data[0] == "OK":
                         ok = "ACCEPTED" if len(data) > 2 and data[2] else "REJECTED"
@@ -483,6 +545,16 @@ async def main():
     if not GROQ_KEY:
         print("[FATAL] GROQ_API_KEY not found (env or Boardroom .env)")
         sys.exit(1)
+    if PAID_ONLY:
+        # Fail closed at boot rather than discovering an unbillable rail after a
+        # customer has already been asked for sats.
+        if _PAYMENT_RAIL is None:
+            print("[FATAL] DVM_PAID_ONLY=1 but the payment rail is offline; "
+                  "refusing to serve unbillable jobs")
+            sys.exit(1)
+        settlement_ledger()
+        print(f"[DVM] paid mode: job-bound settlement ledger at {SETTLEMENT_DB} "
+              f"fees_msat={PAID_FEES_MSAT}")
     await asyncio.gather(*(relay_loop(r) for r in RELAYS))
 
 

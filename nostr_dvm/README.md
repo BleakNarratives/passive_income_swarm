@@ -20,6 +20,8 @@ logs/jobs.jsonl    job ledger — every request, outcome, latency, msats
 ## Operations
 
 ```bash
+./run_paid_worker.sh                   # paid mode (preflight, fail-closed)
+python3 -m dashboard.server            # operator console, 127.0.0.1:8787
 systemctl --user status dvm-worker     # is it serving?
 journalctl --user -u dvm-worker -f     # live tail (jobs + relay OKs)
 tail -f logs/jobs.jsonl                # structured job ledger
@@ -36,19 +38,30 @@ Venv: `~/passive_income_swarm-env` (needs websockets + coincurve + requests).
 | Job intake | LIVE — real traffic on public relays |
 | Inference | LIVE — Groq free tier, fallback chain |
 | Signing/publish | VERIFIED — relays accept our events |
-| Payment collection | **LIVE** — LNURL-pay via coinos.io (bleaknarratives@coinos.io) |
+| Payment collection | **LIVE and job-bound** — LNURL-pay; see [PAID_MODE.md](PAID_MODE.md) |
+| Settlement ledger | **DURABLE** — `logs/settlements.db`, one invoice per job, single-use claims |
 
 Reputation mode (default) serves unpaid jobs to build relay presence. Flip
 `DVM_PAID_ONLY=1` to enable the full pay-to-play loop:
 
-1. Worker generates a real BOLT11 invoice (50 sats text-gen, 20 sats summarize)
-2. Publishes `payment-required` feedback to Nostr with the bolt11
-3. **Polls the coinos.io verify endpoint** every `DVM_PAYMENT_POLL` seconds
-4. If paid within `DVM_PAYMENT_TIMEOUT` seconds → serves the job, logs preimage
-5. If timeout → publishes `payment-timeout` feedback, skips the job
+1. One real BOLT11 invoice is minted per job and **bound to that job id**
+   (50 sats text-gen, 20 sats summarize, both env-overridable)
+2. `payment-required` feedback is published with the bolt11
+3. The coinos.io verify endpoint is polled every `DVM_PAYMENT_POLL` seconds,
+   with a final confirmation check at the deadline
+4. Settled → the job takes a **single-use claim** and is served; preimage recorded
+5. Timeout → `payment-timeout` feedback; the same invoice is reused on any retry,
+   never re-minted
+6. Rail error → **not served**. There is no fall-through.
 
-Env vars: `DVM_PAID_ONLY=1`, `DVM_PAYMENT_TIMEOUT=120`, `DVM_PAYMENT_POLL=3`.
-Payment rail: `payment_rail.py`. NWC client: `nwc_client.py` (preserved for
-future NIP-44 upgrade).
+A requester's `amount` tag is logged as `claimed_amount_msat` and never treated
+as payment. Every state lives in `logs/settlements.db`, so a restart or a relay
+reconnect cannot double-serve or double-charge.
+
+Env vars: `DVM_PAID_ONLY=1`, `DVM_PAYMENT_TIMEOUT=120`, `DVM_PAYMENT_POLL=3`,
+`DVM_FEE_5002_MSAT=50000`, `DVM_FEE_5003_MSAT=20000`.
+Payment rail: `payment_rail.py`. Settlement: `settlement.py` + `paid_flow.py`.
+Run it guarded: `./run_paid_worker.sh` (refuses to start if it cannot bill).
+NWC client: `nwc_client.py` (preserved for future NIP-44 upgrade).
 
 *BleakNarratives // rebuilt live 2026-08-24, payment rail 2026-08-25*
